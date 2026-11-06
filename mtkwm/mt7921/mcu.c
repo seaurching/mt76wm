@@ -27,6 +27,14 @@ int mt7921_mcu_parse_response(struct mt76_dev *mdev, int cmd,
 
 		return -ETIMEDOUT;
 	}
+	/* openwrt/mt76 hardening: response length guards */
+	if ((cmd == MCU_CMD(PATCH_SEM_CONTROL) ||
+	     cmd == MCU_CMD(PATCH_FINISH_REQ)) &&
+	    skb->len < sizeof(*rxd) - 4 + sizeof(u8))
+		return -EINVAL;
+	if (cmd != MCU_CMD(PATCH_SEM_CONTROL) &&
+	    cmd != MCU_CMD(PATCH_FINISH_REQ) && skb->len < sizeof(*rxd))
+		return -EINVAL;
 
 	rxd = (struct mt76_connac2_mcu_rxd *)skb->data;
 	{
@@ -71,6 +79,8 @@ int mt7921_mcu_parse_response(struct mt76_dev *mdev, int cmd,
 		XYLog("mtk-dbg-semframe: SEMRET cmd=%08x seq=%d ret=%d\n",
 		      cmd, seq, ret);
 	} else if (cmd == MCU_EXT_CMD(THERMAL_CTRL)) {
+		if (skb->len < sizeof(*rxd) + 4 + sizeof(__le32))
+			return -EINVAL;
 		skb_pull(skb, sizeof(*rxd) + 4);
 		ret = le32_to_cpu(*(__le32 *)skb->data);
 	} else if (cmd == MCU_UNI_CMD(DEV_INFO_UPDATE) ||
@@ -81,6 +91,8 @@ int mt7921_mcu_parse_response(struct mt76_dev *mdev, int cmd,
 		   cmd == MCU_UNI_CMD(SUSPEND)) {
 		struct mt76_connac_mcu_uni_event *event;
 
+		if (skb->len < sizeof(*rxd) + sizeof(*event))
+			return -EINVAL;
 		skb_pull(skb, sizeof(*rxd));
 		event = (struct mt76_connac_mcu_uni_event *)skb->data;
 		ret = le32_to_cpu(event->status);
@@ -90,12 +102,16 @@ int mt7921_mcu_parse_response(struct mt76_dev *mdev, int cmd,
 	} else if (cmd == MCU_CE_QUERY(REG_READ)) {
 		struct mt76_connac_mcu_reg_event *event;
 
+		if (skb->len < sizeof(*rxd) + sizeof(*event))
+			return -EINVAL;
 		skb_pull(skb, sizeof(*rxd));
 		event = (struct mt76_connac_mcu_reg_event *)skb->data;
 		ret = (int)le32_to_cpu(event->val);
 	} else if (cmd == MCU_EXT_CMD(WF_RF_PIN_CTRL)) {
 		struct mt7921_wf_rf_pin_ctrl_event *event;
 
+		if (skb->len < sizeof(*rxd) + sizeof(*event))
+			return -EINVAL;
 		skb_pull(skb, sizeof(*rxd));
 		event = (struct mt7921_wf_rf_pin_ctrl_event *)skb->data;
 		ret = (int)event->result;
@@ -120,8 +136,18 @@ static int mt7921_mcu_read_eeprom(struct mt792x_dev *dev, u32 offset, u8 *val)
 					&req, sizeof(req), true, &skb);
 	if (ret)
 		return ret;
+	/* openwrt/mt76 hardening: short-frame and invalid-record guards */
+	if (skb->len < sizeof(*res)) {
+		dev_kfree_skb(skb);
+		return -EINVAL;
+	}
 
 	res = (struct mt7921_mcu_eeprom_info *)skb->data;
+	if (!le32_to_cpu(res->valid)) {
+		dev_kfree_skb(skb);
+		return -ENODATA;
+	}
+
 	*val = res->data[offset % MT7921_EEPROM_BLOCK_SIZE];
 	dev_kfree_skb(skb);
 
@@ -473,7 +499,7 @@ static int mt7921_load_clc(struct mt792x_dev *dev, const char *fw_name)
 
 	if (mt76_is_mmio(&dev->mt76)) {
 		ret = mt7921_mcu_read_eeprom(dev, MT_EE_HW_TYPE, &hw_encap);
-		if (ret)
+		if (ret && ret != -ENODATA)
 			return ret;
 		hw_encap = u8_get_bits(hw_encap, MT_EE_HW_TYPE_ENCAP);
 	}
@@ -535,9 +561,13 @@ static int mt7921_load_clc(struct mt792x_dev *dev, const char *fw_name)
 			goto out;
 		}
 
-		/* Newer firmware may add records this driver does not use yet */
-		if (clc->idx >= ARRAY_SIZE(phy->clc))
-			continue;
+		/* openwrt/mt76 hardening: reject out-of-range CLC index
+		 * instead of skipping (it would index phy->clc[] out of
+		 * bounds further down). */
+		if (clc->idx >= ARRAY_SIZE(phy->clc)) {
+			ret = -EINVAL;
+			goto out;
+		}
 
 		/* do not init buf again if chip reset triggered */
 		if (phy->clc[clc->idx])
@@ -566,8 +596,9 @@ out:
 }
 
 static void mt7921_mcu_parse_tx_resource(struct mt76_dev *dev,
-					 struct sk_buff *skb)
+					 struct sk_buff *skb, int len)
 {
+
 	struct mt76_sdio *sdio = &dev->sdio;
 	struct mt7921_tx_resource {
 		__le32 version;
@@ -581,6 +612,9 @@ static void mt7921_mcu_parse_tx_resource(struct mt76_dev *dev,
 		u8 pad[3];
 	} __packed * tx_res;
 
+	if (len < (int)offsetofend(struct mt7921_tx_resource, pp_padding))
+		return;
+
 	tx_res = (struct mt7921_tx_resource *)skb->data;
 	sdio->sched.pse_data_quota = le32_to_cpu(tx_res->pse_data_quota);
 	sdio->pse_mcu_quota_max = le32_to_cpu(tx_res->pse_mcu_quota);
@@ -593,8 +627,9 @@ static void mt7921_mcu_parse_tx_resource(struct mt76_dev *dev,
 }
 
 static void mt7921_mcu_parse_phy_cap(struct mt76_dev *dev,
-				     struct sk_buff *skb)
+				     struct sk_buff *skb, int len)
 {
+
 	struct mt7921_phy_cap {
 		u8 ht;
 		u8 vht;
@@ -614,6 +649,9 @@ static void mt7921_mcu_parse_phy_cap(struct mt76_dev *dev,
 		WF0_24G,
 		WF0_5G
 	};
+
+	if (len < (int)offsetofend(struct mt7921_phy_cap, hw_path))
+		return;
 
 	cap = (struct mt7921_phy_cap *)skb->data;
 
@@ -664,21 +702,25 @@ static int mt7921_mcu_get_nic_capability(struct mt792x_phy *mphy)
 
 		switch (le32_to_cpu(tlv->type)) {
 		case MT_NIC_CAP_6G:
-			phy->cap.has_6ghz = skb->data[0];
+			if (len)
+				phy->cap.has_6ghz = skb->data[0];
 			break;
 		case MT_NIC_CAP_MAC_ADDR:
-			memcpy(phy->macaddr, (void *)skb->data, ETH_ALEN);
+			if (len >= ETH_ALEN)
+				memcpy(phy->macaddr, (void *)skb->data, ETH_ALEN);
 			break;
 		case MT_NIC_CAP_PHY:
-			mt7921_mcu_parse_phy_cap(phy->dev, skb);
+			mt7921_mcu_parse_phy_cap(phy->dev, skb, len);
 			break;
 		case MT_NIC_CAP_TX_RESOURCE:
 			if (mt76_is_sdio(phy->dev))
 				mt7921_mcu_parse_tx_resource(phy->dev,
-							     skb);
+							     skb, len);
 			break;
 		case MT_NIC_CAP_CHIP_CAP:
-			memcpy(&mphy->chip_cap, (void *)skb->data, sizeof(u64));
+			if (len >= sizeof(u64))
+				memcpy(&mphy->chip_cap, (void *)skb->data,
+				       sizeof(u64));
 			break;
 		default:
 			break;
@@ -974,7 +1016,8 @@ int mt7921_mcu_set_chan_info(struct mt792x_phy *phy, int cmd)
 		req.channel_band = chandef->chan->band;
 
 	if (cmd == MCU_EXT_CMD(SET_RX_PATH) ||
-	    dev->mt76.hw->conf.flags & IEEE80211_CONF_MONITOR)
+	    (dev->mt76.hw->conf.flags & IEEE80211_CONF_MONITOR &&
+	     !phy->mt76->offchannel))
 		req.switch_reason = CH_SWITCH_NORMAL;
 	else if (phy->mt76->offchannel)
 		req.switch_reason = CH_SWITCH_SCAN_BYPASS_DPD;
@@ -1199,8 +1242,11 @@ int mt7921_get_txpwr_info(struct mt792x_dev *dev, struct mt7921_txpwr *txpwr)
 	if (ret)
 		return ret;
 
+	if (skb->len < sizeof(*event)) {
+		dev_kfree_skb(skb);
+		return -EINVAL;
+	}
 	event = (struct mt7921_txpwr_event *)skb->data;
-	WARN_ON(skb->len != le16_to_cpu(event->len));
 	memcpy(txpwr, &event->txpwr, sizeof(event->txpwr));
 
 	dev_kfree_skb(skb);

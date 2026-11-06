@@ -873,7 +873,7 @@ mt792x_get_offload_capability(struct device *dev, const char *fw_wm)
 	if (ret)
 		return ret;
 
-	if (!fw || !fw->data || fw->size < sizeof(*hdr)) {
+	if (mt76_connac2_fw_check(fw, NULL)) {
 		dev_err(dev, "Invalid firmware\n");
 		goto out;
 	}

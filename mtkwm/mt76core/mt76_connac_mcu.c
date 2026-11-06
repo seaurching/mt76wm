@@ -3169,7 +3169,7 @@ int mt76_connac2_load_ram(struct mt76_dev *dev, const char *fw_wm,
 	if (ret)
 		return ret;
 
-	if (!fw || !fw->data || fw->size < sizeof(*hdr)) {
+	if (mt76_connac2_fw_check(fw, NULL)) {
 		dev_err(dev->dev, "Invalid firmware\n");
 		ret = -EINVAL;
 		goto out;
@@ -3198,7 +3198,7 @@ int mt76_connac2_load_ram(struct mt76_dev *dev, const char *fw_wm,
 	if (ret)
 		return ret;
 
-	if (!fw || !fw->data || fw->size < sizeof(*hdr)) {
+	if (mt76_connac2_fw_check(fw, NULL)) {
 		dev_err(dev->dev, "Invalid firmware\n");
 		ret = -EINVAL;
 		goto out;
@@ -3235,7 +3235,7 @@ int mt76_connac3_load_phy_ram(struct mt76_dev *dev, const char *fw_name)
 	if (ret)
 		return ret;
 
-	if (!fw || !fw->data || fw->size < sizeof(*hdr)) {
+	if (mt76_connac2_fw_check(fw, NULL)) {
 		dev_err(dev->dev, "Invalid PHY firmware\n");
 		ret = -EINVAL;
 		goto out;
@@ -3286,6 +3286,41 @@ static u32 mt76_connac2_get_data_mode(struct mt76_dev *dev, u32 info)
 	return mode;
 }
 
+/* openwrt/mt76 hardening: validate the firmware trailer/region table
+ * before trusting any of its contents (bounds-checked against fw->size). */
+int mt76_connac2_fw_check(const struct firmware *fw, size_t *data_len)
+{
+	const struct mt76_connac2_fw_region *region;
+	const struct mt76_connac2_fw_trailer *hdr;
+	size_t avail, len = 0;
+	int i;
+
+	if (!fw || !fw->data || fw->size < sizeof(*hdr))
+		return -EINVAL;
+
+	hdr = (const struct mt76_connac2_fw_trailer *)(fw->data + fw->size - sizeof(*hdr));
+	avail = fw->size - sizeof(*hdr);
+	if (hdr->n_region > avail / sizeof(*region))
+		return -EINVAL;
+
+	avail -= hdr->n_region * sizeof(*region);
+	region = (const struct mt76_connac2_fw_region *)(fw->data + avail);
+	for (i = 0; i < hdr->n_region; i++) {
+		u32 region_len = le32_to_cpu(region[i].len);
+
+		if (region_len > avail - len)
+			return -EINVAL;
+
+		len += region_len;
+	}
+
+	if (data_len)
+		*data_len = len;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mt76_connac2_fw_check);
+
 int mt76_connac2_load_patch(struct mt76_dev *dev, const char *fw_name)
 {
 	int i, ret, sem, max_len = mt76_is_sdio(dev) ? 2048 : 4096;
@@ -3317,7 +3352,7 @@ int mt76_connac2_load_patch(struct mt76_dev *dev, const char *fw_name)
 	if (ret)
 		goto out;
 
-	if (!fw || !fw->data || fw->size < sizeof(*hdr)) {
+	if (mt76_connac2_fw_check(fw, NULL)) {
 		dev_err(dev->dev, "Invalid firmware\n");
 		ret = -EINVAL;
 		goto out;
@@ -3405,7 +3440,7 @@ int mt76_connac3_load_cb_patch(struct mt76_dev *dev, const char *fw_name)
 	if (ret)
 		goto out;
 
-	if (!fw || !fw->data || fw->size < sizeof(*hdr)) {
+	if (mt76_connac2_fw_check(fw, NULL)) {
 		dev_err(dev->dev, "Invalid firmware\n");
 		ret = -EINVAL;
 		goto out;
