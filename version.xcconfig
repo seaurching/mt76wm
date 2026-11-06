@@ -1,0 +1,11 @@
+// version.xcconfig — single source of truth for mt76wm versioning.
+//
+// Policy (see docs/versioning.md):
+//   - MODULE_VERSION: bumped 0.1.0 -> 0.2.0 -> 0.3.0 ... on every build
+//   - BUILD_COUNT:    +1 on every build (exposed as CFBundleVersion)
+//
+// The bump happens in a post-build step (scripts/bump_version.sh), so the
+// values here always describe the NEXT build.  Do not edit by hand.
+
+MODULE_VERSION = 0.53.0
+BUILD_COUNT = 53

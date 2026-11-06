@@ -1,0 +1,12 @@
+build/
+Build/
+DerivedData/
+*.xcuserdatad
+xcuserdata/
+.DS_Store
+# generated firmware array (regenerate with scripts/fw_gen.sh after extract_fw.sh)
+# include/FwBinary.cpp   -- the committed placeholder stub is kept; delete before regenerating
+# firmware blobs, not redistributable with the source (see firmware/mt7921/README.md)
+firmware/**/*.bin
+include/FwBinary.cpp
+MacKernelSDK/

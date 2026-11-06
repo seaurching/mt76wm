@@ -1,0 +1,38 @@
+mt76wm - MediaTek Wi-Fi adapter kernel extension for macOS
+===========================================================
+
+Copyright (C) 2026 mt76wm contributors
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, see <https://www.gnu.org/licenses/>.
+
+---------------------------------------------------------------------------
+Third-party components and their licenses:
+
+- itl80211/ (OpenBSD net80211 stack port) and include/HAL/, include/ClientKit/,
+  include/FwData.h, scripts/fw_gen.sh, scripts/zlib_compress_fw.py:
+  from the itlwm project, Copyright (C) 2020 钟先耀 and contributors, GPL-2.0.
+  net80211 retains the original BSD licenses of the OpenBSD/NetBSD project
+  (Atsushi Onoe, Sam Leffler et al.).
+
+- mtkwm/mt76core/ and mtkwm/mt7921/ (to be ported): derived from the Linux
+  kernel mt76 driver, Copyright (C) 2016-2025 MediaTek Inc. and contributors,
+  GPL-2.0 (some files dual GPL-2.0/MIT -- see individual file headers).
+
+- MacKernelSDK: from the Acidanthera project (used as a submodule/symlink),
+  see its own license file.
+
+- Firmware blobs (firmware/mt7921/*.bin) are NOT distributed with this
+  repository. They are property of MediaTek and redistributed under the
+  terms of the linux-firmware MEDIATEK license (see firmware/mt7921/README.md
+  and the LICENCE.mediatek files in the linux-firmware repository).

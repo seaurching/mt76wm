@@ -1,0 +1,95 @@
+# mt76wm XcodeGen project description
+# Generate with: ./scripts/gen_project.sh   (runs xcodegen + patches the
+# product type to kernel-extension, which XcodeGen has no native type for)
+# (the generated mtkwm.xcodeproj is committed for users without xcodegen)
+name: mtkwm
+configFiles:
+  Debug: version.xcconfig
+  Release: version.xcconfig
+options:
+  bundleIdPrefix: com.mt76wm
+  deploymentTarget:
+    macOS: "10.13"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    ARCHS: x86_64
+    ONLY_ACTIVE_ARCH: NO
+    SDKROOT: macosx
+    MACOSX_DEPLOYMENT_TARGET: "10.13"
+    # MODULE_VERSION / BUILD_COUNT are provided by version.xcconfig
+    # (single source of truth, bumped after every build -- see docs/versioning.md)
+    MARKETING_VERSION: "$(MODULE_VERSION)"
+    CURRENT_PROJECT_VERSION: "$(BUILD_COUNT)"
+    GIT_COMMIT: ""
+    CODE_SIGN_IDENTITY: "Apple Development"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ZVXNS6CXS6
+    GCC_C_LANGUAGE_STANDARD: c11
+    CLANG_CXX_LANGUAGE_STANDARD: "gnu++14"
+    CLANG_CXX_LIBRARY: "libc++"
+    GCC_INPUT_FILETYPE: sourcecode.cpp.cpp
+    GCC_NO_COMMON_BLOCKS: YES
+    GCC_PREPROCESSOR_DEFINITIONS:
+      - "DEBUG=1"
+      - "$(inherited)"
+      - "MTKWM_VERSION=\\\"$(MODULE_VERSION)\\\""
+      - "ITLWM_VERSION=\\\"$(MODULE_VERSION)\\\""
+      - "GIT_COMMIT=\\\"$(GIT_COMMIT)\\\""
+      - IEEE80211_STA_ONLY
+    KERNEL_EXTENSION_HEADER_SEARCH_PATHS: "$(PROJECT_DIR)/MacKernelSDK/Headers"
+    KERNEL_FRAMEWORK_HEADERS: "$(PROJECT_DIR)/MacKernelSDK/Headers"
+    OTHER_CPLUSPLUSFLAGS:
+      - "-Wno-deprecated-register"
+      - "$(OTHER_CFLAGS)"
+
+targets:
+  mtkwm:
+    type: bundle   # patched to kernel-extension by scripts/gen_project.sh
+    platform: macOS
+    sources:
+      - path: mtkwm
+        excludes:
+          - "Info.plist"
+      - path: itl80211
+        excludes:
+          - "Info.plist"
+      - path: include
+    preBuildScripts:
+      - name: Generate Firmware
+        script: |
+          "${PROJECT_DIR}/scripts/fw_gen.sh" -P "${PROJECT_DIR}/firmware/"
+    postBuildScripts:
+      - name: Bump Version
+        script: |
+          "${PROJECT_DIR}/scripts/bump_version.sh"
+    settings:
+      base:
+        GCC_PRECOMPILE_PREFIX_HEADER: YES
+        GCC_PREFIX_HEADER: mtkwm/PrivateSPI.pch
+        GCC_PREPROCESSOR_DEFINITIONS:
+          - "$(inherited)"
+          - __PRIVATE_SPI__
+        INFOPLIST_FILE: mtkwm/Info.plist
+        LIBRARY_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/itl80211"
+          - "$(PROJECT_DIR)/itl80211/openbsd"
+          - "$(PROJECT_DIR)/itl80211/linux"
+          - "$(PROJECT_DIR)/MacKernelSDK/Library/x86_64"
+        SYSTEM_HEADER_SEARCH_PATHS: "itl80211/openbsd itl80211 mtkwm/glue/linuxcompat include"
+        MODULE_NAME: com.mt76wm.mtkwm
+        PRODUCT_BUNDLE_IDENTIFIER: com.mt76wm.mtkwm
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        WRAPPER_EXTENSION: kext
+    dependencies:
+      - framework: MacKernelSDK/Library/x86_64/libkmod.a
+
+schemes:
+  mtkwm:
+    build:
+      targets:
+        mtkwm: all
+    run:
+      config: Debug
