@@ -174,3 +174,41 @@ coherent A/B）。**剩余差异在 macOS 内核 PCIe 事务层与 Linux 的行�
 **结论**：openwrt/mt76 是"内核 API 兼容 + 健壮性加固"分支，**sem/固件加载逻辑与
 主线一致——对当前 macOS sem 零应答卡点无直接线索**；其防御性校验（短帧、fw_check、
 valid 位）可作为后续 mt76wm 加固的吸收素材。
+
+### 7.1 openwrt vs mt76wm 移植版——792 系列逐文件分析
+
+**文件覆盖**：openwrt 多出 `sdio_*/usb.c/testmode.c/debugfs.c`（其它形态，与
+MT7921 PCIe 无关）；核心 792 文件两边齐全。mt792x_dma.c 在 mt76wm 中合并进
+`glue/mtk_port_funcs.c`（dma_enable/wfsys_reset 等）。
+
+| 文件（vs 我们的移植） | 差异行 | 差异性质 |
+|---|---|---|
+| mt7921/pci.c | 303 | 主要是 XNU 移植层（M1 兜底/xnu_probe/drvdata/hif_ops 补齐）+ openwrt ITTIM 字面量 |
+| mt7921/pci_mcu.c | 23 | 我们的 SEMSEND/诊断探针（逻辑零差异） |
+| mt7921/mcu.c | 229 | **openwrt 健壮性加固 88 行** + 我们的探针/casts |
+| mt7921/init.c | 50 | XNU workqueue 垫片差异 + openwrt `system_wq` |
+| mt7921/mac.c | 48 | 我们的 casts/探针（逻辑同） |
+| mt792x_core.c | 67 | openwrt fw_check/边界 + 我们 LPCTL 诊断/IOSleep |
+| mt792x_mac.c | 37 | casts 差异 |
+| mt792x_regs.h | 1 | 几乎全同（寄存器定义一致） |
+| mt792x.h | 27 | 我们的 hif_ops NULL-safe 等补充 |
+
+**openwrt 独有的功能性内容（值得 mt76wm 后续吸收的清单）**：
+
+1. **`mt76_connac2_fw_check()`**：固件 trailer/region 表越界校验（load_ram/
+   load_patch 入口），防坏固件。
+2. **parse_response 短帧防御**：sem/FINISH 应答最短 33B（`sizeof(rxd)-4+1`）、
+   其余应答 36B 起——低于即 `-EINVAL`（防坏长度越界读）。
+3. **rx_event 全分支长度校验**：tx_resource / phy_cap / macaddr(≥6) /
+   chip_cap(≥8) / CLC TLV 各自 `len` 下限检查（主线直接 memcpy，短帧越界）。
+4. **`REG_READ` 应答 `valid` 位检查**：无效返 `-ENODATA`，调用方容错跳过。
+5. **CLC 解析加固**：`clc->idx >= ARRAY_SIZE(phy->clc)` 由"continue 跳过"
+   改为"拒绝"（防 idx 越界写）。
+6. **monitor/offchannel 修复**：monitor 判定补 `!phy->mt76->offchannel`
+   （monitor 与 offchannel 并存时的误判 bug）。
+7. **内核 API 兼容**：`assign_bit→set/clear_bit`、`system_percpu_wq→system_wq`
+   （对 XNU 无意义，已由垫片覆盖）。
+
+**对 sem 卡点的结论不变**：sem/固件/MCU 逻辑三方（主线 / openwrt / mt76wm）
+**完全一致**——macOS 平台层问题的定位不受影响。上述 1-6 项列入后续加固 TODO
+（移植成本低：均为局部防御性代码）。
