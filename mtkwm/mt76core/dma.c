@@ -808,12 +808,15 @@ mt76_dma_rx_fill_buf(struct mt76_dev *dev, struct mt76_queue *q,
 	if (!q->ndesc)
 		return 0;
 
-	/* Fill the ring completely: the MT7921 WPDMA consumes the boundary
-	 * descriptor too (dma_idx walks past cpu_idx), and a never-filled
-	 * desc has buf0=0 -- the resulting NULL DMA write wedges the RX
-	 * engine (RX_BUSY stuck) permanently.  Linux keeps one slot spare
-	 * but its ring never hands a zero buf0 across the boundary. */
-	while (q->queued < q->ndesc) {
+	/* Keep one slot spare exactly like Linux (`while (queued < ndesc - 1)`):
+	 * head is a ring index, so filling the ring completely wraps head back
+	 * to 0 and kick_queue then writes cpu_idx == dma_idx -- the WPDMA
+	 * treats that as an EMPTY ring and never consumes the descriptors.
+	 * That is what left the MCU with no RX buffer to write its replies
+	 * into (sem no-response: cpu=0 dma=0 queued=ndesc).  The spare slot's
+	 * descriptor stays marked DMA_DONE (buf0=0) and is never published
+	 * (cpu_idx stops at ndesc-1), so the engine never touches it either. */
+	while (q->queued < q->ndesc - 1) {
 		struct mt76_queue_buf qbuf = {};
 		void *buf = NULL;
 		int offset;

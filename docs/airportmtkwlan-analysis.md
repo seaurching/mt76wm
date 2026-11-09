@@ -1,10 +1,15 @@
-# AirportMtkWlan 对照分析（2026-11-08）
+# AirportMtkWlan 对照分析（2026-11-08；真机运行验证 2026-11-08 补）
 
 克隆 [Arxusion/AirportMtkWlan](https://github.com/Arxusion/AirportMtkWlan)
 （本地 `/Users/miyamoto/Documents/AirportMtkWlan`）与 mt76wm 逐段对照。
 该项目是 OpenBSD **mwx(4)** 的 macOS 移植（MT7921/MT7922，`pci14c3:7961` 同硬件），
-原生 AirPort/Skywalk 形态，**README 声明固件加载 ✅、MSI 中断注册工作中 ✅**
-——这是同硬件 macOS 上已验证工作的参考实现，价值极高。
+原生 AirPort/Skywalk 形态。
+
+**真机运行验证（决定性）**：`/Users/miyamoto/Downloads/AirportMtkWlan.kext`
+（com.flxxxxddd.AirportMtkWlan 2.0.0）在本机 MT7921 上 **完整工作中**：
+固件加载 ✅ → 扫描下发 ✅（`Scan type to FW 1`）→ 原生 AirPort 接口
+**en2 / MAC `b4:b5:b6:e5:8d:ad`**（与 Linux live 的 wlp4s0 真 MAC 一致）✅。
+→ 硬件/BIOS/VT-d/macOS 平台层全无罪，问题 100% 在驱动代码。
 
 ---
 
@@ -21,6 +26,20 @@
 **结论不变**：sem/固件/MCU 命令协议四家一致，卡点不在协议层。
 
 ## 2. 关键差异（macOS 传输层实操，按优先级）
+
+### D0【致命，sem 零应答根因】RX ring fill 留一格 vs 填满环 —— 已修（build 57）
+
+`cpu_idx` 是 producer 指针（环形）。填满整个环后 `q->head` 绕回 0，
+`kick_queue` 写 `cpu_idx=0 == dma_idx=0` —— WPDMA 视为**空环**，从不消费
+任何 RX desc，MCU 应答无 buffer 可写 → sem 永远超时。日志里长期存在的
+`mcu_rxq cpu=0 dma=0 queued=8` 即此（软件满、硬件空）。
+
+三方语义对照：
+- **Linux** `dma.c:785`：`while (q->queued < q->ndesc - 1)` 留一格 ✅
+- **mwx** `mwx_queue_fill`：`last = (mq_count + mq_cons - 1) % mq_count`，
+  `while (idx != last)` 留一格 ✅
+- **mt76wm（旧）**：`while (q->queued < q->ndesc)` 填满 ❌（为修"边界 NULL
+  DMA"时误改；填满后硬件不取 desc，"挂死消失"是假象）
 
 ### D1【最高】probe 手动置 MSI enable 位 —— 已修（build 56）
 
@@ -114,6 +133,23 @@ mwx start 同样 `setBusMasterEnable/setIOEnable(true)/setMemoryEnable(true)`
 → PCIe 对齐实验中"移除 setIOEnable（command=0x0006 对齐 Linux）"优先级
 **降级**：IO Space 位不是差异因子。
 
+## 2.5 架构/形态差异（血统不同，不阻塞 MCU 通路）
+
+| 维度 | AirportMtkWlan (mwx) | mt76wm |
+|---|---|---|
+| 血统 | OpenBSD mwx(4) 原生移植 | Linux mt76 最小改动移植 |
+| 系统形态 | **原生 AirPort/Skywalk**（IO80211Controller、apple80211 ioctl、系统 Wi-Fi 菜单） | itlwm 形态（IOEthernetController + UserClient + HeliPort） |
+| DMA | bus_dmamap + PREWRITE/POSTWRITE sync、mbuf | IOBufferMemoryDescriptor（kIOMapInhibitCache 免 sync）+ skb 包装 |
+| 中断源 | 普通 `IOInterruptEventSource` + trampoline（MSI edge 无需 filter） | `IOFilterInterruptEventSource`（filter 恒 true，等价） |
+| MCU 等待 | `sc_mcu_wait[16]` per-seq 槽 + `tsleep_nsec(3s)`/`wakeup`，超时 `mwx_reset` | `send_and_get_msg` 同步等待（Linux 形态） |
+| RX 事件 | `m_adj(m, MT7921_MCU_RXD_SIZE)` 先撕 12B WPDMA 头 | `skb_pull(sizeof(*rxd)-4)`（等价偏移，D7 复查项） |
+| ring 布局 | 6 个独立 ring（TX/RX × data/MCU/FWDL） | mt76 q_tx/q_rx 索引布局（含 MT_TXQ_FWDL） |
+| 固件分块 | `MWX_FW_CHUNK_SIZE = 4096 - sizeof(mcu_txd)`（4KB cluster） | max_len=4096（与 Linux 一致）✅ 无差异 |
+| 寄存器访问 | bus_space 直读 + `mwx_reg_addr` fixed_map（"To be honest this is ridiculous"） | 同 fixed_map + mmio fail-safe 防越界 panic |
+| 恢复链 | own 失败 → wfsys_reset → **PCIe FLR**（warm reboot 残留） | own 失败 → wfsys_reset 重试（无 FLR） |
+| attach 顺序 | pmctrl → chipid → MCU2HOST_SW_INT_ENA → **无条件 wfsys_reset** → INT_ENA=0/PCIE_MAC_INT=0xff → intr_establish → dma_alloc → preinit(固件) | 中断注册 → mtk_attach（DMA+固件）；wfsys 仅 own 失败时 |
+| 中断处理 | MSI edge drain 循环（清 ENA 期间到达的事件不产生新消息，重读 8 轮） | 单轮处理（靠 poll 兜底） |
+
 ## 3. 对 sem 卡点的更新判断
 
 - 17 项排除表后新增**第 18 项假设：MSI enable 时序错误导致 MSI posted-write
@@ -126,12 +162,13 @@ mwx start 同样 `setBusMasterEnable/setIOEnable(true)/setMemoryEnable(true)`
 
 ## 4. TODO（从 mwx 吸收）
 
+- [x] **D0 RX fill 留一格（sem 零应答根因，build 57）**
 - [x] D1 移除手动 MSI enable（build 56）
 - [x] D2 `MT_PCIE_MAC_INT_ENABLE=0xff`（build 56）
-- [ ] D3 中断源换 `IOInterruptEventSource`（若 D1/D2 不够）
+- [ ] D3 中断源换 `IOInterruptEventSource`（若 D0-D2 后仍无中断）
 - [ ] D4 MSI edge drain 循环搬入 `mt792x_irq_handler`
 - [ ] D5 PCIe FLR 恢复链（warm reboot 残留）
-- [ ] D6 固件 4KB 分块粒度核对
+- [x] D6 固件 4KB 分块粒度核对（与 Linux 4096 一致，无差异）
 - [ ] D7 RX WPDMA 头偏移与 `MT7921_MCU_RXD_SIZE` 复查
-- [ ] 真机验证 build 56：`SEMGET/RELEASE` 是否有 `SEMRET`、
-      中断 log 是否出现 `interrupt status=...`（对照 mwx 的 intr 计数）
+- [ ] 真机验证 build 57：`SEMGET/RELEASE` 出现 `SEMRET ret=2/3`、
+      固件 patch+RAM 四连条、对照 AirportMtkWlan 的 en2 行为
