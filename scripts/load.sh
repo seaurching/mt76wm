@@ -1,17 +1,13 @@
 #!/bin/sh
-# load.sh - load a mtkwm kext (development).
-#   usage: scripts/load.sh [mtkwm|mtkwm-airport]   (default: mtkwm-airport)
-# The two kexts share OS class names (CTimeout, ItlMt76, ...) so they must
-# never be loaded at once -- both bundle ids are unloaded first.
+# load.sh - load the mtkwm-airport kext (native AirPort form).
+#   usage: scripts/load.sh
+# The old HeliPort form is gone (it shared OS class names with this kext and
+# alternating the two provoked zalloc type-confusion panics).
 
 cd "$(dirname "$0")/.." || exit 1
 
-TARGET="${1:-mtkwm-airport}"
-case "$TARGET" in
-    mtkwm-airport) BUNDLE_ID="com.mt76wm.mtkwm-airport" ;;
-    mtkwm)         BUNDLE_ID="com.mt76wm.mtkwm" ;;
-    *) echo "unknown target '$TARGET' (want mtkwm or mtkwm-airport)"; exit 1 ;;
-esac
+TARGET="mtkwm-airport"
+BUNDLE_ID="com.mt76wm.mtkwm-airport"
 
 KEXT=""
 for p in \
@@ -29,10 +25,7 @@ if [ -z "$KEXT" ]; then
 fi
 
 echo "loading $KEXT ($BUNDLE_ID)"
-# Never co-load the two forms: shared OS class names would collide.
-# Also unload the community AirportMtkWlan kext if present -- it matches the
-# same PCI device and its classes would interleave with ours (a co-load of
-# the two produced a zalloc type-confusion panic in kernelmanagerd).
+# Unload ours and the community AirportMtkWlan (same PCI device) first.
 for bid in com.mt76wm.mtkwm-airport com.mt76wm.mtkwm com.flxxxxddd.AirportMtkWlan; do
     sudo kmutil unload --bundle-identifier "$bid" 2>/dev/null \
         || sudo kextunload -b "$bid" 2>/dev/null \
