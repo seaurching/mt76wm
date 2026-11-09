@@ -283,8 +283,20 @@ mtk_net80211_enable(struct mt76_softc *sc)
         return 0;
 
     g_n.stopping = 0;
+#ifdef AIRPORT_WCL
+    /*
+     * The native Wi-Fi form (AirportMtkwm) reports the adapter to macOS as
+     * resetting, then available or gone, from these events.
+     */
+    if (ic->ic_event_handler)
+        ic->ic_event_handler(ic, IEEE80211_EVT_DRIVER_RESET_BEGIN, NULL);
+#endif
     if (mtk_hw_start(g_n.mdev) != 0) {
         XYLog("%s: could not start the device\n", __FUNCTION__);
+#ifdef AIRPORT_WCL
+        if (ic->ic_event_handler)
+            ic->ic_event_handler(ic, IEEE80211_EVT_DRIVER_STOPPED, NULL);
+#endif
         return -1;
     }
     g_n.running = 1;
@@ -295,6 +307,10 @@ mtk_net80211_enable(struct mt76_softc *sc)
     /* Reset to INIT then start the software scan loop. */
     ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
     ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+#ifdef AIRPORT_WCL
+    if (ic->ic_event_handler)
+        ic->ic_event_handler(ic, IEEE80211_EVT_DRIVER_READY, NULL);
+#endif
     return 0;
 }
 
@@ -323,6 +339,16 @@ mtk_net80211_disable(struct mt76_softc *sc)
     mtk_net80211_quiesce();
     mtk_mcu_abort(g_n.mdev, false);
     ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
+#ifdef AIRPORT_WCL
+    /* A stopped firmware scan cannot deliver its completion event. */
+    ic->ic_flags &= ~(IEEE80211_F_BGSCAN | IEEE80211_F_ASCAN);
+    ic->ic_wcl_scan_requested = false;
+    ic->ic_wcl_scan_active = false;
+    ic->ic_wcl_scan_ssid_length = 0;
+    ic->ic_wcl_scan_idle = false;
+    if (ic->ic_event_handler)
+        ic->ic_event_handler(ic, IEEE80211_EVT_DRIVER_STOPPED, NULL);
+#endif
 
     ifp->if_flags &= ~IFF_RUNNING;
     ifq_clr_oactive(&ifp->if_snd);

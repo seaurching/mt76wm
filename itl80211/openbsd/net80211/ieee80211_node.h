@@ -1,3 +1,11 @@
+//
+//  ieee80211_node.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/9.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*
 * Copyright (C) 2020  钟先耀
 *
@@ -66,6 +74,14 @@ struct ieee80211_rateset {
 extern const struct ieee80211_rateset ieee80211_std_rateset_11a;
 extern const struct ieee80211_rateset ieee80211_std_rateset_11b;
 extern const struct ieee80211_rateset ieee80211_std_rateset_11g;
+
+struct ieee80211_node_switch_bss_arg {
+	u_int8_t	cur_macaddr[IEEE80211_ADDR_LEN];
+	u_int8_t	sel_macaddr[IEEE80211_ADDR_LEN];
+};
+
+void ieee80211_node_switch_bss(struct ieee80211com *,
+    struct ieee80211_node *);
 
 /* Index into ieee80211_std_rateset_11n[] array. */
 #define IEEE80211_HT_RATESET_SISO	0
@@ -262,6 +278,7 @@ struct ieee80211_tx_ba {
 	/* Number of A-MPDU subframes in reorder buffer. */
 	u_int16_t		ba_winsize;
 #define IEEE80211_BA_MAX_WINSZ	64	/* corresponds to maximum ADDBA BUFSZ */
+#define IEEE80211_BA_MAX_RX_WINSZ	256	/* RX reorder window (HE allows 256, Linux mt7921 uses it) */
 
 	u_int8_t		ba_token;
 
@@ -286,7 +303,11 @@ struct ieee80211_rx_ba {
 	u_int16_t		ba_winsize;
 	u_int16_t		ba_head;
 	CTimeout*		ba_gap_to;
-#define IEEE80211_BA_GAP_TIMEOUT	300 /* msec */
+/*
+ * 300 ms (OpenBSD) stalls TCP badly when BlockAckReq frames are not delivered
+ * by the firmware; Linux mt76 releases the reorder buffer after 100 ms.
+ */
+#define IEEE80211_BA_GAP_TIMEOUT	100 /* msec */
 
 	/*
 	 * Counter for frames forced to wait in the reordering buffer
@@ -385,6 +406,9 @@ struct ieee80211_node {
 	u_int8_t		ni_key_count;
 	int			ni_port_valid;
 
+	/* WPA3 SAE */
+	struct ieee80211_sae	*ni_sae;
+
 	/* SA Query */
 	u_int16_t		ni_sa_query_trid;
 	CTimeout*		ni_sa_query_to;
@@ -428,6 +452,11 @@ struct ieee80211_node {
     uint32_t        ni_he_oper_params;
     uint16_t        ni_he_oper_nss_set;
     uint8_t         ni_he_optional[8];
+
+    /* 802.11r Fast BSS Transition (FT) state */
+    uint8_t         ni_has_mde;
+    uint16_t        ni_mdid;
+    uint8_t         ni_ft_cap_policy;
     
 	/* Timeout handlers which trigger Tx Block Ack negotiation. */
 	CTimeout*		ni_addba_req_to[IEEE80211_NUM_TID];
@@ -489,6 +518,7 @@ struct ieee80211_node {
 #define IEEE80211_NODE_VHT_SGI80    0x80000    /* SGI on 80 MHz negotiated */
 #define IEEE80211_NODE_VHT_SGI160   0x100000    /* SGI on 160 MHz negotiated */
 #define IEEE80211_NODE_HE       0x200000    /* HE negotiated */
+#define IEEE80211_NODE_MDE      0x400000    /* Mobility Domain Element present */
 
 	/* If not NULL, this function gets called when ni_refcnt hits zero. */
 	void			(*ni_unref_cb)(struct ieee80211com *,

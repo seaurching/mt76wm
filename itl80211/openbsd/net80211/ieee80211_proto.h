@@ -1,3 +1,11 @@
+//
+//  ieee80211_proto.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/21.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*
 * Copyright (C) 2020  钟先耀
 *

@@ -1,3 +1,11 @@
+//
+//  ieee80211_proto.c
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/5/5.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*
 * Copyright (C) 2020  钟先耀
 *
@@ -68,6 +76,7 @@
 
 #include <net80211/ieee80211_var.h>
 #include <net80211/ieee80211_priv.h>
+#include <net80211/ieee80211_sae.h>
 
 const char * const ieee80211_mgt_subtype_name[] = {
 	"assoc_req",	"assoc_resp",	"reassoc_req",	"reassoc_resp",
@@ -1100,7 +1109,7 @@ ieee80211_addba_request(struct ieee80211com *ic, struct ieee80211_node *ni,
 	ba->ba_params =
 	    (ba->ba_winsize << IEEE80211_ADDBA_BUFSZ_SHIFT) |
 	    (tid << IEEE80211_ADDBA_TID_SHIFT);
-    if (ic->ic_caps & IEEE80211_C_AMSDU_IN_AMPDU) {
+    if (ic->ic_caps & (IEEE80211_C_AMSDU_IN_AMPDU | IEEE80211_C_TX_AMSDU_IN_AMPDU)) {
         ba->ba_params |= IEEE80211_ADDBA_AMSDU;
     }
 	if ((ic->ic_htcaps & IEEE80211_HTCAP_DELAYEDBA) == 0)
@@ -1164,7 +1173,7 @@ ieee80211_delba_request(struct ieee80211com *ic, struct ieee80211_node *ni,
 
 		if (ba->ba_buf != NULL) {
 			/* free all MSDUs stored in reordering buffer */
-			for (i = 0; i < IEEE80211_BA_MAX_WINSZ; i++)
+			for (i = 0; i < IEEE80211_BA_MAX_RX_WINSZ; i++)
 				mbuf_freem(ba->ba_buf[i].m);
 			/* free reordering buffer */
 			free(ba->ba_buf);
@@ -1573,6 +1582,12 @@ justcleanup:
 				    ieee80211_state_name[nstate]);
 			break;
 		case IEEE80211_S_SCAN:
+			if (ni->ni_rsnakms & IEEE80211_AKM_SAE) {
+				if (ieee80211_sae_start(ic, ni) != 0) {
+					XYLog("%s: failed to start SAE, aborting auth\n", ifp->if_xname);
+					break;
+				}
+			}
 			IEEE80211_SEND_MGMT(ic, ni,
 			    IEEE80211_FC0_SUBTYPE_AUTH, 1);
 			break;
@@ -1681,7 +1696,9 @@ justcleanup:
                     (ni->ni_flags & IEEE80211_NODE_HE) ?
                     " HE enabled" : "");
 			}
-#ifdef USE_APPLE_SUPPLICANT
+#if defined(AIRPORT_WCL)
+            if (!(ic->ic_flags & IEEE80211_F_RSNON)) {
+#elif defined(USE_APPLE_SUPPLICANT)
             {
 #elif (defined IO80211FAMILY_V2)
             if (ieee80211_is_8021x_akm((enum ieee80211_akm)ni->ni_rsnakms) ||

@@ -1,3 +1,11 @@
+//
+//  ieee80211.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/5/5.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*
 * Copyright (C) 2020  钟先耀
 *
@@ -963,6 +971,7 @@ enum ieee80211_edca_ac {
  */
 #define IEEE80211_AUTH_ALG_OPEN			0x0000
 #define IEEE80211_AUTH_ALG_SHARED		0x0001
+#define IEEE80211_AUTH_ALG_SAE			0x0003
 #define IEEE80211_AUTH_ALG_LEAP			0x0080
 
 /*
@@ -1913,6 +1922,18 @@ enum ieee80211_he_highest_mcs_supported_subfield_enc {
     HIGHEST_MCS_SUPPORTED_MCS10,
     HIGHEST_MCS_SUPPORTED_MCS11,
 };
+
+/* Per-stream intersection of two HE MCS/NSS maps (2 bits per stream, 3 = not supported). */
+static inline uint16_t
+ieee80211_he_mcs_intersection(uint16_t a, uint16_t b)
+{
+    uint16_t result = 0;
+    for (unsigned i = 0; i < 8; i++) {
+        unsigned x = (a >> (2 * i)) & 3, y = (b >> (2 * i)) & 3;
+        result |= ((x == 3 || y == 3) ? 3 : (x < y ? x : y)) << (2 * i);
+    }
+    return result;
+}
 
 /* Calculate 802.11ax HE capabilities IE Tx/Rx HE MCS NSS Support Field size */
 static inline uint8_t

@@ -1,3 +1,11 @@
+//
+//  ieee80211_pae_input.c
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/3/24.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*
  * Copyright (C) 2020  钟先耀
  *
@@ -268,6 +276,19 @@ ieee80211_recv_4way_msg1(struct ieee80211com *ic,
     } else    /* use pre-shared key */
         memcpy(ni->ni_pmk, ic->ic_psk, IEEE80211_PMK_LEN);
     ni->ni_flags |= IEEE80211_NODE_PMK;
+
+    /*
+     * An authenticator repeats message 1 when it could not verify our
+     * message 2, which almost always means a different key (Wi-Fi password).
+     */
+    if (ni->ni_rsn_supp_state == RSNA_SUPP_PTKNEGOTIATING)
+        XYLog("4-way msg 1/4 repeated by %s: it rejected our msg 2/4 (wrong key or Wi-Fi password?), key check %02x\n",
+              ether_sprintf(ni->ni_macaddr),
+              ieee80211_key_check(ni->ni_pmk, IEEE80211_PMK_LEN));
+    else
+        XYLog("4-way msg 1/4 from %s, key check %02x\n",
+              ether_sprintf(ni->ni_macaddr),
+              ieee80211_key_check(ni->ni_pmk, IEEE80211_PMK_LEN));
     
     /* save authenticator's nonce (ANonce) */
     memcpy(ni->ni_nonce, key->nonce, EAPOL_KEY_NONCE_LEN);
@@ -690,6 +711,10 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
                          ether_sprintf(ni->ni_macaddr)));
                 ni->ni_port_valid = 1;
                 ieee80211_set_link_state(ic, LINK_STATE_UP);
+            }
+            if (ni->ni_flags & IEEE80211_NODE_PMK) {
+                ieee80211_pmksa_add(ic, (enum ieee80211_akm)ni->ni_rsnakms,
+                    ni->ni_bssid, ni->ni_pmk, IEEE80211_PMK_INFINITE);
             }
             ni->ni_assoc_fail = 0;
             if (ic->ic_opmode == IEEE80211_M_STA)
