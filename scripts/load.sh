@@ -25,8 +25,17 @@ if [ -z "$KEXT" ]; then
 fi
 
 echo "loading $KEXT ($BUNDLE_ID)"
-# Unload ours and the community AirportMtkWlan (same PCI device) first.
-for bid in com.mt76wm.mtkwm-airport com.mt76wm.mtkwm com.flxxxxddd.AirportMtkWlan; do
+# Never yank the community AirportMtkWlan at runtime: every zalloc
+# type-confusion panic so far fired inside kernelmanagerd while an IO80211
+# kext was being unloaded alongside ours.  Refuse and let the user reboot
+# with it removed instead.
+if kmutil showloaded 2>/dev/null | grep -q com.flxxxxddd.AirportMtkWlan; then
+    echo "REFUSING: com.flxxxxddd.AirportMtkWlan is loaded."
+    echo "Runtime-unloading an IO80211 kext has panicked kernelmanagerd every time."
+    echo "Reboot, then remove/keep it unloaded before loading mtkwm-airport."
+    exit 1
+fi
+for bid in com.mt76wm.mtkwm-airport com.mt76wm.mtkwm; do
     sudo kmutil unload --bundle-identifier "$bid" 2>/dev/null \
         || sudo kextunload -b "$bid" 2>/dev/null \
         || true
