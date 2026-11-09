@@ -1,3 +1,11 @@
+//
+//  sha1-pbkdf2.c
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/9.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*
  * SHA1-based key derivation function (PBKDF2) for IEEE 802.11i
  * Copyright (c) 2003-2005, Jouni Malinen <j@w1.fi>

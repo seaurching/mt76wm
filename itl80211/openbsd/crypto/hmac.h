@@ -1,3 +1,11 @@
+//
+//  hmac.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/3/18.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: hmac.h,v 1.3 2012/12/05 23:20:15 deraadt Exp $	*/
 
 /*-
@@ -40,7 +48,9 @@ typedef struct _HMAC_SHA256_CTX {
 	u_int		key_len;
 } HMAC_SHA256_CTX;
 
-//__BEGIN_DECLS
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 void	 HMAC_MD5_Init(HMAC_MD5_CTX *, const u_int8_t *, u_int)
 		__attribute__((__bounded__(__string__,2,3)));
@@ -63,6 +73,8 @@ void	 HMAC_SHA256_Update(HMAC_SHA256_CTX *, const u_int8_t *, u_int)
 void	 HMAC_SHA256_Final(u_int8_t [SHA256_DIGEST_LENGTH], HMAC_SHA256_CTX *)
 		__attribute__((__bounded__(__minbytes__,1,SHA256_DIGEST_LENGTH)));
 
-//__END_DECLS
+#ifdef __cplusplus
+}
+#endif
 
 #endif	/* _HMAC_H_ */

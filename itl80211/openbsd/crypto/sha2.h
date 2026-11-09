@@ -1,3 +1,11 @@
+//
+//  sha2.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/5/11.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: sha2.h,v 1.5 2014/11/16 17:39:09 tedu Exp $	*/
 
 /*
@@ -60,7 +68,9 @@ typedef struct _SHA2_CTX {
 	u_int8_t	buffer[SHA512_BLOCK_LENGTH];
 } SHA2_CTX;
 
-//__BEGIN_DECLS
+#ifdef __cplusplus
+extern "C" {
+#endif
 void SHA256Init(SHA2_CTX *);
 void SHA256Update(SHA2_CTX *, const void *, size_t)
 	__attribute__((__bounded__(__string__,2,3)));
@@ -78,6 +88,8 @@ void SHA512Update(SHA2_CTX *, const void *, size_t)
 	__attribute__((__bounded__(__string__,2,3)));
 void SHA512Final(u_int8_t[SHA512_DIGEST_LENGTH], SHA2_CTX *)
 	__attribute__((__bounded__(__minbytes__,1,SHA512_DIGEST_LENGTH)));
-//__END_DECLS
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _SHA2_H */

@@ -1,3 +1,11 @@
+//
+//  castsb.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/3/12.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*      $OpenBSD: castsb.h,v 1.1 2000/02/28 23:13:04 deraadt Exp $       */
 /*
  *	CAST-128 in C

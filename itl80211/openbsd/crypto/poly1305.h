@@ -1,3 +1,11 @@
+//
+//  poly1305.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/5/23.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*
  * Public Domain poly1305 from Andrew Moon
  *

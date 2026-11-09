@@ -1,3 +1,11 @@
+//
+//  idgen.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/15.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: idgen.h,v 1.3 2013/06/05 05:45:54 djm Exp $	*/
 /*
  * Copyright (c) 2008 Damien Miller <djm@mindrot.org>

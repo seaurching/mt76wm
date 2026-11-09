@@ -1,3 +1,11 @@
+//
+//  set_key.c
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/21.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: set_key.c,v 1.4 2015/12/10 21:00:51 naddy Exp $	*/
 
 /* lib/des/set_key.c */

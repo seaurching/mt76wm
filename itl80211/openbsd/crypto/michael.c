@@ -1,3 +1,11 @@
+//
+//  michael.c
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/27.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: michael.c,v 1.2 2008/07/21 19:52:45 damien Exp $	*/
 
 /*

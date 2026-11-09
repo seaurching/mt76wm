@@ -1,3 +1,11 @@
+//
+//  rmd160.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/3.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: rmd160.h,v 1.5 2009/07/05 19:33:46 millert Exp $	*/
 /*
  * Copyright (c) 2001 Markus Friedl.  All rights reserved.

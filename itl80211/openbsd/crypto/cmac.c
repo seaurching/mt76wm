@@ -1,3 +1,11 @@
+//
+//  cmac.c
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/21.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: cmac.c,v 1.3 2017/05/02 17:07:06 mikeb Exp $	*/
 
 /*-

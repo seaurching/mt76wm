@@ -1,3 +1,11 @@
+//
+//  blf.c
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/21.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: blf.c,v 1.7 2007/11/26 09:28:34 martynas Exp $	*/
 
 /*

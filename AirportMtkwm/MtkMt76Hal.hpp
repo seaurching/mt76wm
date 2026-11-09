@@ -2,9 +2,10 @@
  * MtkMt76Hal.hpp — HAL adapter for the native AirPort form (AirportMtkwm).
  *
  * Bridges the Mt76HalService contract (expected by the AirportMtkWlan-derived
- * front end) onto the existing ItlMt76 facade.  Composition, not multiple
- * inheritance onto ItlMt76: both contracts derive from OSObject and a diamond
- * would be a metaclass/retain-count hazard.
+ * front end) onto the existing ItlHalService facades (ItlMt76 for PCI,
+ * ItlMt7601u for USB via MtkUsbMt76Hal).  Composition, not multiple
+ * inheritance: both contracts derive from OSObject and a diamond would be a
+ * metaclass/retain-count hazard.
  */
 #ifndef MtkMt76Hal_hpp
 #define MtkMt76Hal_hpp
@@ -38,7 +39,7 @@ public:
     virtual MtkDriverInfo *getDriverInfo() override { return this; }
     virtual MtkDriverController *getDriverController() override { return this; }
 
-    /* MtkDriverInfo — forwarded to the ItlMt76 getters. */
+    /* MtkDriverInfo — forwarded to the inner facade's getters. */
     virtual const char *getFirmwareVersion() override;
     virtual int16_t getBSSNoise() override;
     virtual bool is5GBandSupport() override;
@@ -56,8 +57,35 @@ public:
 
     virtual void free() override;
 
+protected:
+    /* Factory hook: PCI default is ItlMt76; MtkUsbMt76Hal returns ItlMt7601u. */
+    virtual ItlHalService *createInner();
+    ItlHalService *inner() const { return fInner; }
+
 private:
-    ItlMt76 *fInner;
+    ItlHalService *fInner;
+};
+
+/*
+ * USB variant: the inner facade is ItlMt7601u, which attaches through the
+ * IOUSBHostDevice/IOUSBHostInterface pair instead of an IOPCIDevice.
+ * attach()/detach() ignore the PCI argument and drive attachUSB/detachUSB.
+ */
+class MtkUsbMt76Hal : public MtkMt76Hal {
+    OSDeclareDefaultStructors(MtkUsbMt76Hal)
+
+public:
+    void setUSB(void *usbDevice, void *usbInterface, IOService *client);
+    virtual bool attach(IOPCIDevice *device) override;
+    virtual void detach(IOPCIDevice *device) override;
+
+protected:
+    virtual ItlHalService *createInner() override;
+
+private:
+    void *fUsbDevice;
+    void *fUsbInterface;
+    IOService *fClient;
 };
 
 /* Prefer-5 GHz helper used by the WCL scan path (ported from MtkMwx). */

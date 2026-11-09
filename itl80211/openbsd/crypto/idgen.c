@@ -1,3 +1,11 @@
+//
+//  idgen.c
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/3/18.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*
  * Copyright (c) 2008 Damien Miller <djm@mindrot.org>
  *

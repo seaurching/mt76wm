@@ -1,3 +1,11 @@
+//
+//  chacha_private.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/3/30.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*
 chacha-merged.c version 20080118
 D. J. Bernstein

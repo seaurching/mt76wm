@@ -1,3 +1,11 @@
+//
+//  chachapoly.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/3/12.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*
  * Copyright (c) 2015 Mike Belopuhov
  *

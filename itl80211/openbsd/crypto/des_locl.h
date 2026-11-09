@@ -1,3 +1,11 @@
+//
+//  des_locl.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/9.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: des_locl.h,v 1.7 2015/12/10 21:00:51 naddy Exp $	*/
 
 /* lib/des/des_locl.h */

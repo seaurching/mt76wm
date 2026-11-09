@@ -1,3 +1,11 @@
+//
+//  sk.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/27.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: sk.h,v 1.2 2002/10/27 13:24:26 miod Exp $	*/
 
 /* lib/des/sk.h */

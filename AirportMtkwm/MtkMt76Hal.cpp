@@ -2,10 +2,12 @@
  * MtkMt76Hal.cpp — HAL adapter for the native AirPort form (AirportMtkwm).
  */
 #include "MtkMt76Hal.hpp"
+#include "ItlMt7601u.hpp"
 #include <net80211/ieee80211_var.h>
 
 #define super Mt76HalService
 OSDefineMetaClassAndStructors(MtkMt76Hal, Mt76HalService)
+OSDefineMetaClassAndStructors(MtkUsbMt76Hal, MtkMt76Hal)
 
 char nmx_wifi_band;	/* NVRAM nullmoth-wifi-band: '5', '2' or 0 (prefer 5 GHz) */
 
@@ -31,15 +33,20 @@ nmx_hide_24ghz_twin(struct ieee80211com *ic, const struct ieee80211_node *node)
 	return false;
 }
 
+ItlHalService *MtkMt76Hal::createInner()
+{
+    return new ItlMt76;
+}
+
 bool MtkMt76Hal::initWithController(IOEthernetController *controller,
                                     IOWorkLoop *workloop,
                                     IOCommandGate *commandGate)
 {
-    fInner = new ItlMt76;
+    fInner = createInner();
     if (fInner == NULL)
         return false;
     /* The same controller/workloop/gate must reach both layers: the inner
-     * ItlMt76 attach() reads getController() into com.sc_ether (the
+     * facade's attach() reads getController() into com.sc_ether (the
      * IO80211Controller instance) and hangs the MSI source on
      * getMainWorkLoop(). */
     if (!super::initWithController(controller, workloop, commandGate))
@@ -129,4 +136,30 @@ void MtkMt76Hal::free()
         fInner = NULL;
     }
     super::free();
+}
+
+/* ---------------------------- USB variant ---------------------------- */
+
+ItlHalService *MtkUsbMt76Hal::createInner()
+{
+    return new ItlMt7601u;
+}
+
+void MtkUsbMt76Hal::setUSB(void *usbDevice, void *usbInterface, IOService *client)
+{
+    fUsbDevice = usbDevice;
+    fUsbInterface = usbInterface;
+    fClient = client;
+}
+
+bool MtkUsbMt76Hal::attach(IOPCIDevice *device)
+{
+    (void)device;   /* USB attaches through the host-device pair. */
+    return ((ItlMt7601u *)inner())->attachUSB(fUsbDevice, fUsbInterface, fClient);
+}
+
+void MtkUsbMt76Hal::detach(IOPCIDevice *device)
+{
+    (void)device;
+    ((ItlMt7601u *)inner())->detachUSB();
 }

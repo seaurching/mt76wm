@@ -1,3 +1,11 @@
+//
+//  podd.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/3/18.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: podd.h,v 1.1 2000/02/28 23:13:05 deraadt Exp $	*/
 
 /* lib/des/podd.h */

@@ -1,3 +1,11 @@
+//
+//  rijndael.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/9.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: rijndael.h,v 1.13 2008/06/09 07:49:45 djm Exp $ */
 
 /**

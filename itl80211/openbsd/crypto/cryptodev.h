@@ -1,3 +1,11 @@
+//
+//  cryptodev.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/3/12.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: cryptodev.h,v 1.71 2017/08/10 18:57:20 tedu Exp $	*/
 
 /*

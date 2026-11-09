@@ -22,6 +22,7 @@
 #include <libkern/c++/OSString.h>
 #include <IOKit/IOService.h>
 #include <IOKit/pci/IOPCIDevice.h>
+#include <IOKit/usb/IOUSBHostDevice.h>
 #include <IOKit/IOLib.h>
 #include <libkern/OSKextLib.h>
 #include <libkern/c++/OSMetaClass.h>
@@ -243,6 +244,7 @@ public:
     IOInterruptEventSource* fInterrupt;
     IOTimerEventSource *watchdogTimer;
     IOPCIDevice *pciNub;
+    IOUSBHostDevice *usbNub;   /* non-NULL in the USB form */
     IONetworkStats *fpNetStats;
     AirportMtkwmEthernetInterface *bsdInterface;
     #ifdef AIRPORT_WCL

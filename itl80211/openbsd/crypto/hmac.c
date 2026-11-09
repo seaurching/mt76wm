@@ -1,3 +1,11 @@
+//
+//  hmac.c
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/9.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: hmac.c,v 1.4 2016/09/19 18:09:40 tedu Exp $	*/
 
 /*-

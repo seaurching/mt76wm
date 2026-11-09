@@ -1,3 +1,11 @@
+//
+//  ecb3_enc.c
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/9.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: ecb3_enc.c,v 1.3 2013/11/18 18:49:53 brad Exp $	*/
 
 /* lib/des/ecb3_enc.c */

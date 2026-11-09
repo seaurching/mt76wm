@@ -87,6 +87,7 @@
 		320E69EC0AAA9C98342ECE75 /* compat.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C8771B7399151DA54B3D2B38 /* compat.cpp */; };
 		3214B28C8344301603417A17 /* init.c in Sources */ = {isa = PBXBuildFile; fileRef = 3EEEF08852BB067566D6315C /* init.c */; };
 		330B47D1E27A626544CAB4CF /* mcu.c in Sources */ = {isa = PBXBuildFile; fileRef = 6F2F7097157150781CAF8AC1 /* mcu.c */; };
+		3335F56F149A5673483BF9FD /* MtkUsbDeviceWrapper.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A23A28C384ED32A4E1D9CE52 /* MtkUsbDeviceWrapper.cpp */; };
 		352FD3BD995F633E48949733 /* mcu.c in Sources */ = {isa = PBXBuildFile; fileRef = ADE064E7F3750A03C73C1EA0 /* mcu.c */; };
 		35DEB19B34B981F5C1162899 /* pci.c in Sources */ = {isa = PBXBuildFile; fileRef = 40F369F207843810887099D2 /* pci.c */; };
 		36555204F45D057BBD45754B /* mt7615_stubs.c in Sources */ = {isa = PBXBuildFile; fileRef = C2F6126336B8C47B1405D4E3 /* mt7615_stubs.c */; };
@@ -387,6 +388,7 @@
 		06EF4728894779EB7DA9D323 /* mt76_softc.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = mt76_softc.h; sourceTree = "<group>"; };
 		0733A8EEF6D152F898120CF7 /* pci_phy.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = pci_phy.c; sourceTree = "<group>"; };
 		085DAE7206F0D81EE677D505 /* cfg80211.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = cfg80211.h; sourceTree = "<group>"; };
+		086DA948FBF7EFC53E4985B8 /* MtkUsbDeviceWrapper.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MtkUsbDeviceWrapper.hpp; sourceTree = "<group>"; };
 		099974AB4BBC58541A079E3B /* ieee80211_crypto.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = ieee80211_crypto.c; sourceTree = "<group>"; };
 		09B6C39801BFBD4384868349 /* util.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = util.h; sourceTree = "<group>"; };
 		0A2ADFBFC3898B3F5DFCD98F /* delay.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = delay.h; sourceTree = "<group>"; };
@@ -668,6 +670,7 @@
 		A02AA447E3F7C61BCFC10D96 /* IOSkywalkLegacyEthernetInterface.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IOSkywalkLegacyEthernetInterface.h; sourceTree = "<group>"; };
 		A12C19CF7581DBC97680B368 /* IO80211ControllerV2.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IO80211ControllerV2.h; sourceTree = "<group>"; };
 		A1D24C854C65C5AD3E8449C9 /* io.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = io.h; sourceTree = "<group>"; };
+		A23A28C384ED32A4E1D9CE52 /* MtkUsbDeviceWrapper.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = MtkUsbDeviceWrapper.cpp; sourceTree = "<group>"; };
 		A264167C70EEF02D34F3FA5E /* FwBinary.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = FwBinary.cpp; sourceTree = "<group>"; };
 		A2A3AD7AFFA3D80B5C747011 /* mt7915.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = mt7915.h; sourceTree = "<group>"; };
 		A460FE4287DB639628AA6795 /* main.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = main.c; sourceTree = "<group>"; };
@@ -831,7 +834,7 @@
 		FDB0CB879B195EEDAD37E1CC /* IOSkywalkEthernetInterface.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IOSkywalkEthernetInterface.h; sourceTree = "<group>"; };
 		FDC0D45CA8A7B7BECCAC0420 /* mt7615_entry.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = mt7615_entry.c; sourceTree = "<group>"; };
 		FEF5FE96FC0BCCB97E388C80 /* mac.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = mac.h; sourceTree = "<group>"; };
-		"TEMP_9A59527A-34E7-4C5D-906E-376779A76CDA" /* version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = version.xcconfig; sourceTree = "<group>"; };
+		"TEMP_152232D1-F48A-46A9-B124-C5B16D1A5855" /* version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = version.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1293,6 +1296,8 @@
 				EBA0927B90D256BFE5B797A3 /* MtkMt76Hal.hpp */,
 				0E786343CC99BCB696BFDEF0 /* MtkPciDeviceWrapper.cpp */,
 				3C17AB97BD3CB370F02156C0 /* MtkPciDeviceWrapper.hpp */,
+				A23A28C384ED32A4E1D9CE52 /* MtkUsbDeviceWrapper.cpp */,
+				086DA948FBF7EFC53E4985B8 /* MtkUsbDeviceWrapper.hpp */,
 				49C3BB0AB038226EA0978C0E /* WCL */,
 			);
 			path = AirportMtkwm;
@@ -1634,10 +1639,10 @@
 			path = crypto;
 			sourceTree = "<group>";
 		};
-		"TEMP_CC674F7A-F03F-4D9E-8C2C-112A07B2B491" /* mt76wm */ = {
+		"TEMP_5D68BFC0-BA83-4D2B-8600-B5CA523A8820" /* mt76wm */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_9A59527A-34E7-4C5D-906E-376779A76CDA" /* version.xcconfig */,
+				"TEMP_152232D1-F48A-46A9-B124-C5B16D1A5855" /* version.xcconfig */,
 			);
 			path = mt76wm;
 			sourceTree = "<group>";
@@ -1817,6 +1822,7 @@
 				68E865A882DEF389FB4E035B /* MtkLog.cpp in Sources */,
 				1AEF50AAA1533072238B3CD2 /* MtkMt76Hal.cpp in Sources */,
 				07FDB1C3E9C51B59A05C42E2 /* MtkPciDeviceWrapper.cpp in Sources */,
+				3335F56F149A5673483BF9FD /* MtkUsbDeviceWrapper.cpp in Sources */,
 				54ADF003CB5457886899E6C6 /* WCL.cpp in Sources */,
 				755F66219EA52CF013AD95B2 /* _ifq.cpp in Sources */,
 				BEC02CE95AEE34366425233B /* _mbuf.cpp in Sources */,
@@ -2176,7 +2182,7 @@
 /* Begin XCBuildConfiguration section */
 		01589135A84F05BA950E2E15 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_9A59527A-34E7-4C5D-906E-376779A76CDA" /* version.xcconfig */;
+			baseConfigurationReference = "TEMP_152232D1-F48A-46A9-B124-C5B16D1A5855" /* version.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ARCHS = x86_64;
@@ -2295,7 +2301,7 @@
 		};
 		281AF18AA1722D603EC81D4A /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_9A59527A-34E7-4C5D-906E-376779A76CDA" /* version.xcconfig */;
+			baseConfigurationReference = "TEMP_152232D1-F48A-46A9-B124-C5B16D1A5855" /* version.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ARCHS = x86_64;

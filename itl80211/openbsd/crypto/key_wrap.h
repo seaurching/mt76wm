@@ -1,3 +1,11 @@
+//
+//  key_wrap.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/27.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: key_wrap.h,v 1.3 2017/05/02 17:07:06 mikeb Exp $	*/
 
 /*-

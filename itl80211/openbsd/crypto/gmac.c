@@ -1,3 +1,11 @@
+//
+//  gmac.c
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/9.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: gmac.c,v 1.10 2017/05/02 11:44:32 mikeb Exp $	*/
 
 /*

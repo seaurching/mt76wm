@@ -1,3 +1,11 @@
+//
+//  spr.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/5/23.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: spr.h,v 1.2 2002/10/27 13:24:26 miod Exp $	*/
 
 /* lib/des/spr.h */

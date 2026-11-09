@@ -1,3 +1,11 @@
+//
+//  md5.c
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/5/5.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: md5.c,v 1.4 2014/12/28 10:04:35 tedu Exp $	*/
 
 /*

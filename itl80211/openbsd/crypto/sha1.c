@@ -1,3 +1,11 @@
+//
+//  sha1.c
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/3/24.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: sha1.c,v 1.11 2014/12/28 10:04:35 tedu Exp $	*/
 
 /*

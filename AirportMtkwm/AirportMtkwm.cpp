@@ -14,6 +14,7 @@
 
 #include "AirportMtkwmSkywalkInterface.hpp"
 #include "MtkPciDeviceWrapper.hpp"
+#include "MtkUsbDeviceWrapper.hpp"
 
 #define super IO80211Controller
 OSDefineMetaClassAndStructors(AirportMtkwm, IO80211Controller);
@@ -185,15 +186,22 @@ bool AirportMtkwm::init(OSDictionary *properties)
 IOService* AirportMtkwm::probe(IOService *provider, SInt32 *score)
 {
     XYLog("%s\n", __PRETTY_FUNCTION__);
-    MtkPciDeviceWrapper *wrapper = OSDynamicCast(MtkPciDeviceWrapper, provider);
-    if (!wrapper) {
-        XYLog("%s Not a MtkPciDeviceWrapper instance\n", __FUNCTION__);
-        return NULL;
-    }
-    pciNub = wrapper->pciNub;
-    fHalService = wrapper->fHalService;
-    if (!pciNub || !fHalService) {
-        XYLog("%s Not a valid MtkPciDeviceWrapper instance\n", __FUNCTION__);
+    if (MtkPciDeviceWrapper *wrapper = OSDynamicCast(MtkPciDeviceWrapper, provider)) {
+        pciNub = wrapper->pciNub;
+        fHalService = wrapper->fHalService;
+        if (!pciNub || !fHalService) {
+            XYLog("%s Not a valid MtkPciDeviceWrapper instance\n", __FUNCTION__);
+            return NULL;
+        }
+    } else if (MtkUsbDeviceWrapper *wrapper = OSDynamicCast(MtkUsbDeviceWrapper, provider)) {
+        usbNub = wrapper->usbNub;
+        fHalService = wrapper->fHalService;
+        if (!usbNub || !fHalService) {
+            XYLog("%s Not a valid MtkUsbDeviceWrapper instance\n", __FUNCTION__);
+            return NULL;
+        }
+    } else {
+        XYLog("%s Not a MtkPciDeviceWrapper/MtkUsbDeviceWrapper instance\n", __FUNCTION__);
         return NULL;
     }
     return super::probe(provider, score);
@@ -325,29 +333,32 @@ bool AirportMtkwm::start(IOService *provider)
 #endif
         return false;
     }
-    pciNub->setBusMasterEnable(true);
-    pciNub->setIOEnable(true);
-    pciNub->setMemoryEnable(true);
-    pciNub->configWrite8(0x41, 0);
-    if (pciNub->requestPowerDomainState(kIOPMPowerOn,
-                                        (IOPowerConnection *) getParentEntry(gIOPowerPlane), IOPMLowestState) != IOPMNoErr) {
-        super::stop(provider);
-        return false;
-    }
-    if (initPCIPowerManagment(pciNub) == false) {
-        super::stop(pciNub);
-        return false;
+    if (pciNub) {
+        /* PCI-only bring-up (USB devices are already opened by their wrapper). */
+        pciNub->setBusMasterEnable(true);
+        pciNub->setIOEnable(true);
+        pciNub->setMemoryEnable(true);
+        pciNub->configWrite8(0x41, 0);
+        if (pciNub->requestPowerDomainState(kIOPMPowerOn,
+                                            (IOPowerConnection *) getParentEntry(gIOPowerPlane), IOPMLowestState) != IOPMNoErr) {
+            super::stop(provider);
+            return false;
+        }
+        if (initPCIPowerManagment(pciNub) == false) {
+            super::stop(provider);
+            return false;
+        }
     }
     if (_fWorkloop == NULL) {
         XYLog("No _fWorkloop!!\n");
-        super::stop(pciNub);
+        super::stop(provider);
         releaseAll();
         return false;
     }
     _fCommandGate = IOCommandGate::commandGate(this, (IOCommandGate::Action)AirportMtkwm::tsleepHandler);
     if (_fCommandGate == 0) {
         XYLog("No command gate!!\n");
-        super::stop(pciNub);
+        super::stop(provider);
         releaseAll();
         return false;
     }
@@ -375,7 +386,7 @@ bool AirportMtkwm::start(IOService *provider)
 
     if (!fHalService->attach(pciNub)) {
         XYLog("attach fail\n");
-        super::stop(pciNub);
+        super::stop(provider);
         releaseAll();
         return false;
     }
@@ -383,7 +394,7 @@ bool AirportMtkwm::start(IOService *provider)
     if (fWatchdogWorkLoop == NULL) {
         XYLog("init watchdog workloop fail\n");
         fHalService->detach(pciNub);
-        super::stop(pciNub);
+        super::stop(provider);
         releaseAll();
         return false;
     }
@@ -391,7 +402,7 @@ bool AirportMtkwm::start(IOService *provider)
     if (!watchdogTimer) {
         XYLog("init watchdog fail\n");
         fHalService->detach(pciNub);
-        super::stop(pciNub);
+        super::stop(provider);
         releaseAll();
         return false;
     }

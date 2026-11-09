@@ -1,3 +1,11 @@
+//
+//  arc4.h
+//  SimpleMtkWlan
+//
+//  Created by laobamac (王孝慈) on 2026/4/21.
+//  Copyright © 2026 laobamac (王孝慈). All rights reserved.
+//
+
 /*	$OpenBSD: arc4.h,v 1.3 2007/09/11 12:07:05 djm Exp $	*/
 /*
  * Copyright (c) 2003 Markus Friedl <markus@openbsd.org>
