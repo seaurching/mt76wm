@@ -212,3 +212,23 @@ MT7921 PCIe 无关）；核心 792 文件两边齐全。mt792x_dma.c 在 mt76wm 
 **对 sem 卡点的结论不变**：sem/固件/MCU 逻辑三方（主线 / openwrt / mt76wm）
 **完全一致**——macOS 平台层问题的定位不受影响。上述 1-6 项列入后续加固 TODO
 （移植成本低：均为局部防御性代码）。
+
+## 8. AirportMtkWlan 对照分析（2026-11-08）
+
+克隆 `github.com/Arxusion/AirportMtkWlan`（OpenBSD mwx(4) 的 macOS 移植，
+**同硬件 14c3:7961 已验证固件加载 + MSI 中断工作中**）对照，详见
+[airportmtkwlan-analysis.md](airportmtkwlan-analysis.md)。要点：
+
+- sem 协议 / mcu_txd 帧格式 / sem 值提取（rxd_ext_eid）**四方一致**（再证无罪）。
+- **差异 D1（最高优先，已修 build 56）**：mwx 明确禁止 probe 手动置 MSI enable
+  位（"nothing has programmed the MSI address/data yet"）——我们原
+  `mtkwm.cpp:90` 手动置位 → MSI 发往未编程地址 + INTx 停发 → **中断从不投递**，
+  且 posted-write abort 可能拖死 WPDMA（sem 零应答**第 18 项假设**）。已移除。
+- **差异 D2（已补 build 56）**：`MT_PCIE_MAC_INT_ENABLE=0xff`（PCIe MAC 中断
+  转发，mwx 在 attach + dma_enable 两处写；Linux mt7921 依赖 boot 值故无此步）
+  已补进 `mt792x_dma_enable`。
+- **重要无罪数据点**：mwx 同样 `setIOEnable(true)` 且工作 → PCIe 对齐实验中
+  "移除 IO Space 位"一项**可跳过**。
+- 后续梯队：D3 换普通 `IOInterruptEventSource`（MSI edge-triggered 无需 filter）、
+  D4 MSI edge drain 循环、D5 PCIe FLR 恢复链（warm reboot 残留）、D6 固件
+  4KB 分块、D7 RX WPDMA 头偏移复查。

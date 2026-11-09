@@ -614,6 +614,11 @@ int mt792x_dma_enable(struct mt792x_dev *dev)
     else
         mt76_wr(dev, MT_WFDMA0_HOST_INT_ENA, irq_mask);
     mt76_set(dev, MT_MCU2HOST_SW_INT_ENA, MT_MCU_CMD_WAKE_RX_PCIE);
+    /* Forward WPDMA interrupts through the PCIe MAC to the host.  The
+     * Linux mt7921 driver relies on the boot value here, but the
+     * AirportMtkWlan (mwx) port found it must be programmed explicitly
+     * on macOS (dma_enable + attach both write 0xff). */
+    mt76_wr(dev, MT_PCIE_MAC_INT_ENABLE, 0xff);
 
     /* TODO: mt792x_dma_prefetch() tuning for MT7925/7927/7928 families */
     return 0;

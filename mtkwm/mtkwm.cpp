@@ -42,7 +42,7 @@ bool mtkwm::init(OSDictionary *properties)
 #define  PCI_MSIX_FLAGS_ENABLE    0x8000    /* MSI-X enable */
 #define  PCI_MSI_FLAGS_ENABLE    0x0001    /* MSI feature enabled */
 
-static void pciMsiSetEnable(IOPCIDevice *device, UInt8 msiCap, int enable)
+static void __unused pciMsiSetEnable(IOPCIDevice *device, UInt8 msiCap, int enable)
 {
     u16 control;
     
@@ -86,9 +86,14 @@ IOService* mtkwm::probe(IOService *provider, SInt32 *score)
             pciMsiXClearAndSet(device, msixCap, PCI_MSIX_FLAGS_ENABLE, 0);
         }
         device->findPCICapability(PCI_CAP_ID_MSI, &msiCap);
-        if (msiCap) {
-            pciMsiSetEnable(device, msiCap, 1);
-        }
+        /*
+         * Do NOT set the MSI enable bit by hand (AirportMtkWlan/mwx proven
+         * practice): nothing has programmed the MSI address/data yet, and
+         * with MSI enabled the device stops raising INTx and sends messages
+         * to an unprogrammed address (posted-write abort can wedge WPDMA).
+         * IOPCIFamily programs the MSI address/data and sets the enable bit
+         * itself when the PCIMessaged vector is registered in attach.
+         */
         if (!msiCap && !msixCap) {
             XYLog("%s No MSI cap\n", __FUNCTION__);
             fHalService->release();
