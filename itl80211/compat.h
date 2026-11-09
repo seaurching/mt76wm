@@ -159,8 +159,8 @@ typedef IOMemoryMap*			bus_space_tag_t;
 typedef IOPCIDevice*			pcitag_t;
 typedef uint32_t			pcireg_t;
 
-class pci_intr_handle : public OSObject {
-	OSDeclareDefaultStructors(pci_intr_handle)
+class MtkPciIntrHandle : public OSObject {
+	OSDeclareDefaultStructors(MtkPciIntrHandle)
 public:
 	IOWorkLoop*		workloop;
 	IOInterruptEventSource*	intr;
@@ -168,7 +168,7 @@ public:
 	void (*func)(void* arg);
 	void* arg;
 };
-typedef pci_intr_handle* pci_intr_handle_t;
+typedef MtkPciIntrHandle* MtkPciIntrHandle_t;
 
 /*
  * Actions for ca_activate.
@@ -268,10 +268,10 @@ void		pci_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int reg, pcireg_t val);
 pcireg_t	pci_mapreg_type(pci_chipset_tag_t pc, pcitag_t tag, int reg);
 int		pci_mapreg_map(const struct pci_attach_args *pa, int reg, pcireg_t type, int busflags, bus_space_tag_t *tagp,
 			       bus_space_handle_t *handlep, bus_addr_t *basep, bus_size_t *sizep, bus_size_t maxsize);
-int     pci_intr_map_msix(struct pci_attach_args *pa, int vec, pci_intr_handle_t *ihp);
-int		pci_intr_map_msi(struct pci_attach_args *paa, pci_intr_handle_t *ih);
-int		pci_intr_map(struct pci_attach_args *paa, pci_intr_handle_t *ih);
-void*		pci_intr_establish(pci_chipset_tag_t pc, pci_intr_handle_t ih, int level, int (*handler)(void *), void *arg);
+int     pci_intr_map_msix(struct pci_attach_args *pa, int vec, MtkPciIntrHandle_t *ihp);
+int		pci_intr_map_msi(struct pci_attach_args *paa, MtkPciIntrHandle_t *ih);
+int		pci_intr_map(struct pci_attach_args *paa, MtkPciIntrHandle_t *ih);
+void*		pci_intr_establish(pci_chipset_tag_t pc, MtkPciIntrHandle_t ih, int level, int (*handler)(void *), void *arg);
 void		pci_intr_disestablish(pci_chipset_tag_t pc, void *ih);
 
 uint64_t    bus_space_read_8(bus_space_tag_t space, bus_space_handle_t handle, bus_size_t offset);

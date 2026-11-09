@@ -58,7 +58,7 @@
 #include <net/if.h>
 #include <net/if_var.h>
 #include <sys/queue.h>
-#include <sys/CTimeout.hpp>
+#include <sys/MtkCTimeout.hpp>
 #include <sys/_if_media.h>
 #include <sys/_ifq.h>
 #include <net/if_dl.h>
@@ -208,7 +208,7 @@ struct _ifnet {                /* and the entries */
     u_short    if_rtlabelid;        /* [c] next route label */
     uint8_t if_priority;        /* [c] route priority offset */
     uint8_t if_llprio;        /* [N] link layer priority */
-    CTimeout* if_slowtimo;    /* [I] watchdog timeout */
+    MtkCTimeout* if_slowtimo;    /* [I] watchdog timeout */
 //    struct    task if_watchdogtask;    /* [I] watchdog task */
 //    struct    task if_linkstatetask;    /* [I] task to do route updates */
 //

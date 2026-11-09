@@ -7,7 +7,7 @@
 //
 #include "AirportMtkwm.hpp"
 #include "AirportMtkwmSkywalkInterface.hpp"
-#include <sys/CTimeout.hpp>
+#include <sys/MtkCTimeout.hpp>
 #include <libkern/c++/OSMetaClass.h>
 #include <crypto/sha1.h>
 #include <net80211/ieee80211_node.h>
@@ -1002,7 +1002,7 @@ setSCAN_REQ(struct apple80211_scan_data *sd)
 
 extern OSDictionary *convertScanToDictionary(apple80211_scan_result *a1);
 
-static int convertNodeToScanResult(MtkHalService *fHalService, struct ieee80211_node *fNextNodeToSend, apple80211_scan_result *result)
+static int convertNodeToScanResult(Mt76HalService *fHalService, struct ieee80211_node *fNextNodeToSend, apple80211_scan_result *result)
 {
     bzero(result, sizeof(*result));
     result->version = APPLE80211_VERSION;

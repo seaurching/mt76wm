@@ -23,7 +23,7 @@
 #include <sys/param.h>
 #include <sys/proc.h>
 
-OSDefineMetaClassAndStructors(pci_intr_handle, OSObject)
+OSDefineMetaClassAndStructors(MtkPciIntrHandle, OSObject)
 
 int pci_get_capability(pci_chipset_tag_t chipsettag, pcitag_t pcitag, int capid, int *offsetp, pcireg_t *valuep) {
 	uint8_t offset;
@@ -70,7 +70,7 @@ int pci_mapreg_map(const struct pci_attach_args *pa, int reg, pcireg_t type, int
 }
 
 int
-pci_intr_map_msix(struct pci_attach_args *pa, int vec, pci_intr_handle_t *ihp)
+pci_intr_map_msix(struct pci_attach_args *pa, int vec, MtkPciIntrHandle_t *ihp)
 {
     pci_chipset_tag_t pc = pa->pa_pc;
     pcitag_t tag = pa->pa_tag;
@@ -87,11 +87,11 @@ pci_intr_map_msix(struct pci_attach_args *pa, int vec, pci_intr_handle_t *ihp)
     return pci_intr_map_msi(pa, ihp);
 }
 
-int pci_intr_map_msi(struct pci_attach_args *paa, pci_intr_handle_t *ih) {
+int pci_intr_map_msi(struct pci_attach_args *paa, MtkPciIntrHandle_t *ih) {
 	if (paa == 0 || ih == 0)
 		return 1;
 	
-	*ih = new pci_intr_handle();
+	*ih = new MtkPciIntrHandle();
 	
 	if (*ih == 0)
 		return 1;
@@ -103,19 +103,19 @@ int pci_intr_map_msi(struct pci_attach_args *paa, pci_intr_handle_t *ih) {
 	return 0; // XXX not required on OS X
 }
 
-int pci_intr_map(struct pci_attach_args *paa, pci_intr_handle_t *ih) {
+int pci_intr_map(struct pci_attach_args *paa, MtkPciIntrHandle_t *ih) {
 	return pci_intr_map_msi(paa, ih);
 }
 
 void interruptTrampoline(OSObject *ih, IOInterruptEventSource *, int count);
 void interruptTrampoline(OSObject *ih, IOInterruptEventSource *, int count) {
-	pci_intr_handle* _ih = OSDynamicCast(pci_intr_handle, ih);
+	MtkPciIntrHandle* _ih = OSDynamicCast(MtkPciIntrHandle, ih);
 	if (_ih == 0)
 		return;
 	_ih->func(_ih->arg); // jump to actual interrupt handler
 }
 
-void* pci_intr_establish(pci_chipset_tag_t pc, pci_intr_handle_t ih, int level, int (*handler)(void *), void *arg) {
+void* pci_intr_establish(pci_chipset_tag_t pc, MtkPciIntrHandle_t ih, int level, int (*handler)(void *), void *arg) {
 	ih->arg = arg;
 	ih->intr = IOInterruptEventSource::interruptEventSource(ih, &interruptTrampoline, ih->dev);
 	
@@ -129,7 +129,7 @@ void* pci_intr_establish(pci_chipset_tag_t pc, pci_intr_handle_t ih, int level, 
 }
 
 void pci_intr_disestablish(pci_chipset_tag_t pc, void *ih) {
-	pci_intr_handle_t intr = (pci_intr_handle_t) ih;
+	MtkPciIntrHandle_t intr = (MtkPciIntrHandle_t) ih;
 	
 	intr->workloop->removeEventSource(intr->intr);
 	

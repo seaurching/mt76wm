@@ -30,12 +30,14 @@ fi
 
 echo "loading $KEXT ($BUNDLE_ID)"
 # Never co-load the two forms: shared OS class names would collide.
-sudo kmutil unload --bundle-identifier com.mt76wm.mtkwm-airport 2>/dev/null \
-    || sudo kextunload -b com.mt76wm.mtkwm-airport 2>/dev/null \
-    || true
-sudo kmutil unload --bundle-identifier com.mt76wm.mtkwm 2>/dev/null \
-    || sudo kextunload -b com.mt76wm.mtkwm 2>/dev/null \
-    || true
+# Also unload the community AirportMtkWlan kext if present -- it matches the
+# same PCI device and its classes would interleave with ours (a co-load of
+# the two produced a zalloc type-confusion panic in kernelmanagerd).
+for bid in com.mt76wm.mtkwm-airport com.mt76wm.mtkwm com.flxxxxddd.AirportMtkWlan; do
+    sudo kmutil unload --bundle-identifier "$bid" 2>/dev/null \
+        || sudo kextunload -b "$bid" 2>/dev/null \
+        || true
+done
 sudo chown -R root:wheel "$KEXT"
 sudo chmod -R go-w "$KEXT"
 

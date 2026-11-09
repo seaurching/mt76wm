@@ -25,7 +25,7 @@
 
 #define super IOEthernetController
 OSDefineMetaClassAndStructors(mtkwm, IOEthernetController)
-OSDefineMetaClassAndStructors(CTimeout, OSObject)
+OSDefineMetaClassAndStructors(MtkCTimeout, OSObject)
 
 IOWorkLoop *_fWorkloop;
 IOCommandGate *_fCommandGate;

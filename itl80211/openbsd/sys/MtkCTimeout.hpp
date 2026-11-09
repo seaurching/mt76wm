@@ -1,5 +1,5 @@
 //
-//  CTimeout.h
+//  MtkCTimeout.h
 //  AppleIntelWifiAdapter
 //
 //  Created by 钟先耀 on 2020/1/30.
@@ -20,14 +20,14 @@
 * GNU General Public License for more details.
 */
 
-#ifndef CTimeout_h
-#define CTimeout_h
+#ifndef MtkCTimeout_h
+#define MtkCTimeout_h
 
 #include <IOKit/IOTimerEventSource.h>
 #include <libkern/c++/OSObject.h>
 
-class CTimeout : public OSObject {
-    OSDeclareDefaultStructors(CTimeout)
+class MtkCTimeout : public OSObject {
+    OSDeclareDefaultStructors(MtkCTimeout)
     
 public:
     static void timeoutOccurred(OSObject* owner, IOTimerEventSource* timer);
@@ -49,4 +49,4 @@ public:
     bool isPending;
 };
 
-#endif /* CTimeout_h */
+#endif /* MtkCTimeout_h */

@@ -38,43 +38,43 @@ void splx(int s)
 {
 }
 
-void timeout_set(CTimeout **t, void (*fn)(void *), void *arg)
+void timeout_set(MtkCTimeout **t, void (*fn)(void *), void *arg)
 {
-    _fCommandGate->runAction(&CTimeout::timeout_set, t, (void*)fn, arg);
+    _fCommandGate->runAction(&MtkCTimeout::timeout_set, t, (void*)fn, arg);
 }
 
-int timeout_add_msec(CTimeout **to, int msecs)
+int timeout_add_msec(MtkCTimeout **to, int msecs)
 {
-    return _fCommandGate->runAction(&CTimeout::timeout_add_msec, to, _fWorkloop, &msecs) == kIOReturnSuccess ? 1 : 0;
+    return _fCommandGate->runAction(&MtkCTimeout::timeout_add_msec, to, _fWorkloop, &msecs) == kIOReturnSuccess ? 1 : 0;
 }
 
-int timeout_add_sec(CTimeout **to, int secs)
+int timeout_add_sec(MtkCTimeout **to, int secs)
 {
     return timeout_add_msec(to, secs * 1000);
 }
 
-int timeout_add_usec(CTimeout **to, int usecs)
+int timeout_add_usec(MtkCTimeout **to, int usecs)
 {
     return timeout_add_msec(to, (int) usecs / 1000);
 }
 
-int timeout_del(CTimeout **to)
+int timeout_del(MtkCTimeout **to)
 {
     //    IOLog("timeout_del\n");
-    return _fCommandGate->runAction(&CTimeout::timeout_del, to, _fWorkloop) == kIOReturnSuccess ? 1 : 0;
+    return _fCommandGate->runAction(&MtkCTimeout::timeout_del, to, _fWorkloop) == kIOReturnSuccess ? 1 : 0;
 }
 
-int timeout_free(CTimeout **to)
+int timeout_free(MtkCTimeout **to)
 {
-    return _fCommandGate->runAction(&CTimeout::timeout_free, to, _fWorkloop) == kIOReturnSuccess ? 1 : 0;
+    return _fCommandGate->runAction(&MtkCTimeout::timeout_free, to, _fWorkloop) == kIOReturnSuccess ? 1 : 0;
 }
 
-int timeout_pending(CTimeout **to)
+int timeout_pending(MtkCTimeout **to)
 {
-    return _fCommandGate->runAction(&CTimeout::timeout_pending, to) == kIOReturnSuccess ? 1 : 0;
+    return _fCommandGate->runAction(&MtkCTimeout::timeout_pending, to) == kIOReturnSuccess ? 1 : 0;
 }
 
-int timeout_initialized(CTimeout **to)
+int timeout_initialized(MtkCTimeout **to)
 {
     return (*to) != NULL;
 }

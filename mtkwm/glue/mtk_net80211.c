@@ -52,7 +52,7 @@ static struct {
     struct mt76_softc *sc;
     void              *mdev;        /* struct mt792x_dev *               */
     int (*sc_newstate)(struct ieee80211com *, enum ieee80211_state, int);
-    CTimeout          *scan_to;     /* per-channel dwell timer           */
+    MtkCTimeout          *scan_to;     /* per-channel dwell timer           */
     struct mbuf_list   ml;          /* RX batch for ieee80211_inputm()   */
     int                running;
     int                stopping;    /* teardown: no new tunes / re-arms  */
@@ -232,8 +232,8 @@ mtk_net80211_quiesce(void)
     if (g_n.scan_to) {
         timeout_del(&g_n.scan_to);
         /*
-         * Also free: a leaked CTimeout instance pins the kext
-         * ("Can't unload kext ... class CTimeout has instances") and
+         * Also free: a leaked MtkCTimeout instance pins the kext
+         * ("Can't unload kext ... class MtkCTimeout has instances") and
          * blocks every later unload/reload cycle.
          */
         timeout_free(&g_n.scan_to);
@@ -243,8 +243,8 @@ mtk_net80211_quiesce(void)
 /*
  * Full teardown for the unload path (mirror of the mtk_net80211_attach
  * ifattach).  ieee80211_ifdetach releases ic_bgscan_timeout and
- * if_slowtimo — without it those CTimeout instances survive and
- * kmutil unload fails with "class CTimeout has instances".  Idempotent.
+ * if_slowtimo — without it those MtkCTimeout instances survive and
+ * kmutil unload fails with "class MtkCTimeout has instances".  Idempotent.
  */
 extern "C" void
 mtk_net80211_ifdetach(void)

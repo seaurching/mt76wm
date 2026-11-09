@@ -100,7 +100,6 @@
 		3B1F2F8AAE0B1C623E41AA7A /* ieee80211_crypto_tkip.c in Sources */ = {isa = PBXBuildFile; fileRef = 99857AAE0ADF745503A62C27 /* ieee80211_crypto_tkip.c */; };
 		3B97FE82FFD608F9788DE7A5 /* mt76x02_util.c in Sources */ = {isa = PBXBuildFile; fileRef = 815483D5764FD92E2101ED25 /* mt76x02_util.c */; };
 		3BF4CD3D660B845D4F985497 /* ieee80211_output.c in Sources */ = {isa = PBXBuildFile; fileRef = 5C914E181AAA49AEE47EC161 /* ieee80211_output.c */; };
-		3E0A09C6FB05A376B7C916E0 /* MtkHalService.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9BF486490678423EC8A8AAC0 /* MtkHalService.cpp */; };
 		3EB29CFC9505D1759B72241B /* ieee80211_crypto_wep.c in Sources */ = {isa = PBXBuildFile; fileRef = 1A7155B6CD751E7E0BEC73D5 /* ieee80211_crypto_wep.c */; };
 		3F390AC6BDD08BA6225F47BF /* mt76x2_entry.c in Sources */ = {isa = PBXBuildFile; fileRef = C7605BE1235B91CAB0CCA64C /* mt76x2_entry.c */; };
 		3F6DCE090028F83C520D299F /* mmio.c in Sources */ = {isa = PBXBuildFile; fileRef = 0F33E72602495079576A907D /* mmio.c */; };
@@ -150,7 +149,6 @@
 		5C89608FF9FECB7D8E8DF6CB /* ieee80211_input.c in Sources */ = {isa = PBXBuildFile; fileRef = 2D453D802215567A860B17FF /* ieee80211_input.c */; };
 		5D0DD47A430D21BAD05F8FEE /* ieee80211_sae.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DEE80E9FAF5E6F684B27D9C2 /* ieee80211_sae.cpp */; };
 		5E0A92E99150BA3D89544EC5 /* mmio.c in Sources */ = {isa = PBXBuildFile; fileRef = EFC3460EB73BDE1B5BA2F549 /* mmio.c */; };
-		5E4959780E2E24D3C920D5A3 /* MtkHalService.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9BF486490678423EC8A8AAC0 /* MtkHalService.cpp */; };
 		5E7361F29D38536706D16010 /* mt7915_entry.c in Sources */ = {isa = PBXBuildFile; fileRef = 2CB3AF05C3ECECB95C3AEB13 /* mt7915_entry.c */; };
 		5EB5EF81BDA7F214F35E3266 /* init.c in Sources */ = {isa = PBXBuildFile; fileRef = 7DCE29AC4204105B840E8F4D /* init.c */; };
 		5EED695D213C6E90544485C0 /* pci_init.c in Sources */ = {isa = PBXBuildFile; fileRef = 587F2ED8C645BFCEFBE97533 /* pci_init.c */; };
@@ -294,6 +292,7 @@
 		C091EA7B242DD12EF903B97A /* gmac.c in Sources */ = {isa = PBXBuildFile; fileRef = D26F02AC7195E68C3D586B3D /* gmac.c */; };
 		C29A4C70425608D29FF8305E /* arp.c in Sources */ = {isa = PBXBuildFile; fileRef = 37AD2A6C3BE6F4B8E9498B58 /* arp.c */; };
 		C43E1978FE49AD7381813722 /* FwBinary.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A264167C70EEF02D34F3FA5E /* FwBinary.cpp */; };
+		C4DD9B7386A565E8E214A235 /* Mt76HalService.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8278A2A36E51939CF1310048 /* Mt76HalService.cpp */; };
 		C612B40FCA06C6A8748A4830 /* ecb_enc.c in Sources */ = {isa = PBXBuildFile; fileRef = 2CADA89828894295CCF56C94 /* ecb_enc.c */; };
 		C77CC89AF818C02B9A3AAAF2 /* mac.c in Sources */ = {isa = PBXBuildFile; fileRef = BB34BD5F494AA504D67B2CAE /* mac.c */; };
 		C7F865C4768C6A3998B7533C /* _task.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 88DCCB8FB89905EE49567B9D /* _task.cpp */; };
@@ -307,6 +306,7 @@
 		CC30604744F1F7C7EEB90A5C /* mcu.c in Sources */ = {isa = PBXBuildFile; fileRef = 371BEE1013829F0C4775FF2A /* mcu.c */; };
 		CCBF5AECE01B128F8673BEED /* mcu.c in Sources */ = {isa = PBXBuildFile; fileRef = A63B7A1C47C3D49D3D68C057 /* mcu.c */; };
 		CD53679F72C0F87C9F54618F /* chachapoly.c in Sources */ = {isa = PBXBuildFile; fileRef = 333E3C49E9B46787D9804D24 /* chachapoly.c */; };
+		CE2128AA6550847C822EC941 /* Mt76HalService.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8278A2A36E51939CF1310048 /* Mt76HalService.cpp */; };
 		CF3BAE7BDB06C2DF9A87C841 /* mtkwmUSB.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 9C3F290E2C784EA72B5F8595 /* mtkwmUSB.cpp */; };
 		CF7284D4A969D968244CAF12 /* core.c in Sources */ = {isa = PBXBuildFile; fileRef = 14E098D8B6827DA6C36C81F6 /* core.c */; };
 		CFBA9A445B78B709F41777F0 /* cast.c in Sources */ = {isa = PBXBuildFile; fileRef = AE780BCEFB08DFA9E2208FA0 /* cast.c */; };
@@ -444,7 +444,6 @@
 		1FC86F49A164E895A8172106 /* mac.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = mac.h; sourceTree = "<group>"; };
 		1FFEB311DE7C298877C36A8B /* phy.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = phy.c; sourceTree = "<group>"; };
 		2172E246A180FAEE06C20E55 /* errno.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = errno.h; sourceTree = "<group>"; };
-		22D4771B0D47F1FA57555088 /* MtkHalService.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MtkHalService.hpp; sourceTree = "<group>"; };
 		2437A5A629BA7BA5C09C42D3 /* _buf.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = _buf.h; sourceTree = "<group>"; };
 		24405C64DC99A197E72C5EDB /* mac80211.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = mac80211.h; sourceTree = "<group>"; };
 		24CE30115EC58113816846A8 /* sha1-pbkdf2.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "sha1-pbkdf2.c"; sourceTree = "<group>"; };
@@ -503,6 +502,7 @@
 		3D6D7E773C77047C31496844 /* IO80211Interface.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IO80211Interface.h; sourceTree = "<group>"; };
 		3E003BB350BFA14939919A46 /* eeprom.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = eeprom.h; sourceTree = "<group>"; };
 		3EEEF08852BB067566D6315C /* init.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = init.c; sourceTree = "<group>"; };
+		408A607860BEEF731AC10542 /* Mt76HalService.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = Mt76HalService.hpp; sourceTree = "<group>"; };
 		40F369F207843810887099D2 /* pci.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = pci.c; sourceTree = "<group>"; };
 		41B6878BE5E8D297293873D5 /* ieee80211_node.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = ieee80211_node.c; sourceTree = "<group>"; };
 		41C5F38F7F3C17B45F78DC75 /* bitops.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bitops.h; sourceTree = "<group>"; };
@@ -529,6 +529,7 @@
 		4B38ACD2131F30B2785625D1 /* apple_private_spi.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = apple_private_spi.h; sourceTree = "<group>"; };
 		4C2FFF669DA7807E1C35009C /* md5.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = md5.h; sourceTree = "<group>"; };
 		4CC5A9D6426795A3A040621C /* phy.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = phy.c; sourceTree = "<group>"; };
+		4E302F4499ED1952C7C26471 /* MtkCTimeout.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = MtkCTimeout.hpp; sourceTree = "<group>"; };
 		4E70FA27A770FCDE42829D66 /* IOSkywalkInterface.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IOSkywalkInterface.h; sourceTree = "<group>"; };
 		4F1A78608DAE67439F797BC8 /* dma.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = dma.c; sourceTree = "<group>"; };
 		4FA7E5A40F96BF8696EB29C9 /* mt76x02_regs.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = mt76x02_regs.h; sourceTree = "<group>"; };
@@ -606,6 +607,7 @@
 		809ADF60E44F28C183F98779 /* CCLogPipe.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CCLogPipe.h; sourceTree = "<group>"; };
 		809B4C96E301B8C7237E9ED1 /* main.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = main.c; sourceTree = "<group>"; };
 		815483D5764FD92E2101ED25 /* mt76x02_util.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = mt76x02_util.c; sourceTree = "<group>"; };
+		8278A2A36E51939CF1310048 /* Mt76HalService.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Mt76HalService.cpp; sourceTree = "<group>"; };
 		82943DD538772B422A94BB50 /* ieee80211_regdomain.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ieee80211_regdomain.h; sourceTree = "<group>"; };
 		82ABBDB0431C79F364DFAB90 /* apple80211_ioctl.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = apple80211_ioctl.h; sourceTree = "<group>"; };
 		835D7D5EAD0BA14DF2F0DF7C /* dma.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = dma.c; sourceTree = "<group>"; };
@@ -653,7 +655,6 @@
 		9AE8D3203BAFBE73A9CA2418 /* eeprom.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = eeprom.c; sourceTree = "<group>"; };
 		9AF91EE4AED4816CB5AA17DF /* random.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = random.h; sourceTree = "<group>"; };
 		9BC8A77B7E77087B7AC64E6B /* initvals_init.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = initvals_init.h; sourceTree = "<group>"; };
-		9BF486490678423EC8A8AAC0 /* MtkHalService.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = MtkHalService.cpp; sourceTree = "<group>"; };
 		9C2CCE557E866FD21BF26352 /* _if_ether.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = _if_ether.h; sourceTree = "<group>"; };
 		9C3F290E2C784EA72B5F8595 /* mtkwmUSB.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mtkwmUSB.cpp; sourceTree = "<group>"; };
 		9C56585256B3543C5F4BB41E /* FaultReporter.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FaultReporter.h; sourceTree = "<group>"; };
@@ -825,13 +826,12 @@
 		F80A27938E4FB9B7D4BF046E /* dma.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = dma.c; sourceTree = "<group>"; };
 		F8B7AD3E09B045FF4024B2DC /* eeprom.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = eeprom.c; sourceTree = "<group>"; };
 		F8E2797B7659AC3A168634CD /* _mbuf.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = _mbuf.cpp; sourceTree = "<group>"; };
-		FAB080553827F03153860E7F /* CTimeout.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = CTimeout.hpp; sourceTree = "<group>"; };
 		FCE21A5D3D2426265113C7DA /* partitions.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = partitions.h; sourceTree = "<group>"; };
 		FD7DC66DD6C4B62C26BC9BBF /* mcu.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = mcu.h; sourceTree = "<group>"; };
 		FDB0CB879B195EEDAD37E1CC /* IOSkywalkEthernetInterface.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IOSkywalkEthernetInterface.h; sourceTree = "<group>"; };
 		FDC0D45CA8A7B7BECCAC0420 /* mt7615_entry.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = mt7615_entry.c; sourceTree = "<group>"; };
 		FEF5FE96FC0BCCB97E388C80 /* mac.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = mac.h; sourceTree = "<group>"; };
-		"TEMP_21DDD790-F2CF-4264-9B69-3FDFC7D1F99C" /* version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = version.xcconfig; sourceTree = "<group>"; };
+		"TEMP_9A59527A-34E7-4C5D-906E-376779A76CDA" /* version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = version.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1017,8 +1017,8 @@
 				B278437D5EE2973B866BC81C /* _task.h */,
 				37AD2A6C3BE6F4B8E9498B58 /* arp.c */,
 				1D421DB44BA2A7F018C6C5C2 /* arp.h */,
-				FAB080553827F03153860E7F /* CTimeout.hpp */,
 				754DA51B806661682EA38B7A /* endian.h */,
+				4E302F4499ED1952C7C26471 /* MtkCTimeout.hpp */,
 				B7E8FE43C564388988CA5D9B /* pcireg.h */,
 				5F8BD64C47B5F7A870737D74 /* timeout.h */,
 				29009E714A06C049D74EB468 /* tree.h */,
@@ -1068,10 +1068,10 @@
 				469240381F102C5476C621B8 /* ItlDriverInfo.hpp */,
 				C4D0DC976528B4EB3DF051A5 /* ItlHalService.cpp */,
 				DE383E1F31EE32E923763433 /* ItlHalService.hpp */,
+				8278A2A36E51939CF1310048 /* Mt76HalService.cpp */,
+				408A607860BEEF731AC10542 /* Mt76HalService.hpp */,
 				491BC0EFCCC1D7436338EE64 /* MtkDriverController.hpp */,
 				33B1A5A03CBECDA89E72D960 /* MtkDriverInfo.hpp */,
-				9BF486490678423EC8A8AAC0 /* MtkHalService.cpp */,
-				22D4771B0D47F1FA57555088 /* MtkHalService.hpp */,
 			);
 			path = HAL;
 			sourceTree = "<group>";
@@ -1634,10 +1634,10 @@
 			path = crypto;
 			sourceTree = "<group>";
 		};
-		"TEMP_9349CE1E-36E2-4E61-973D-E648780F2CA2" /* mt76wm */ = {
+		"TEMP_CC674F7A-F03F-4D9E-8C2C-112A07B2B491" /* mt76wm */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_21DDD790-F2CF-4264-9B69-3FDFC7D1F99C" /* version.xcconfig */,
+				"TEMP_9A59527A-34E7-4C5D-906E-376779A76CDA" /* version.xcconfig */,
 			);
 			path = mt76wm;
 			sourceTree = "<group>";
@@ -1812,8 +1812,8 @@
 				0189AAF74F3DFD423BD63B8C /* ItlHalService.cpp in Sources */,
 				4A22AACD6E32B9BDD19B8DF3 /* ItlMt76.cpp in Sources */,
 				9677D925A4865393E9A16C1E /* ItlMt7601u.cpp in Sources */,
+				C4DD9B7386A565E8E214A235 /* Mt76HalService.cpp in Sources */,
 				8567D50F0981432925B0DC58 /* MtkDma.cpp in Sources */,
-				5E4959780E2E24D3C920D5A3 /* MtkHalService.cpp in Sources */,
 				68E865A882DEF389FB4E035B /* MtkLog.cpp in Sources */,
 				1AEF50AAA1533072238B3CD2 /* MtkMt76Hal.cpp in Sources */,
 				07FDB1C3E9C51B59A05C42E2 /* MtkPciDeviceWrapper.cpp in Sources */,
@@ -1996,8 +1996,8 @@
 				7204EB6D207DC7FD9B901BEC /* ItlHalService.cpp in Sources */,
 				F10774DE80FF60F9DF708D34 /* ItlMt76.cpp in Sources */,
 				205C541A1A3ED7CD463B3004 /* ItlMt7601u.cpp in Sources */,
+				CE2128AA6550847C822EC941 /* Mt76HalService.cpp in Sources */,
 				EA3463457764195BFFD31774 /* MtkDma.cpp in Sources */,
-				3E0A09C6FB05A376B7C916E0 /* MtkHalService.cpp in Sources */,
 				A9A692C95F5688B1C1B8A4AD /* MtkNetworkUserClient.cpp in Sources */,
 				BF2795F42CCBE4275F276349 /* _ifq.cpp in Sources */,
 				66C7F521D46358A70CF0B454 /* _mbuf.cpp in Sources */,
@@ -2176,7 +2176,7 @@
 /* Begin XCBuildConfiguration section */
 		01589135A84F05BA950E2E15 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_21DDD790-F2CF-4264-9B69-3FDFC7D1F99C" /* version.xcconfig */;
+			baseConfigurationReference = "TEMP_9A59527A-34E7-4C5D-906E-376779A76CDA" /* version.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ARCHS = x86_64;
@@ -2295,7 +2295,7 @@
 		};
 		281AF18AA1722D603EC81D4A /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_21DDD790-F2CF-4264-9B69-3FDFC7D1F99C" /* version.xcconfig */;
+			baseConfigurationReference = "TEMP_9A59527A-34E7-4C5D-906E-376779A76CDA" /* version.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ARCHS = x86_64;

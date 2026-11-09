@@ -1,5 +1,5 @@
 //
-//  MtkHalService.hpp
+//  Mt76HalService.hpp
 //  SimpleMtkWlan
 //
 //  Created by laobamac (王孝慈) on 2026/3/30.
@@ -20,8 +20,8 @@
 * GNU General Public License for more details.
 */
 
-#ifndef MtkHalService_hpp
-#define MtkHalService_hpp
+#ifndef Mt76HalService_hpp
+#define Mt76HalService_hpp
 
 #include <libkern/c++/OSObject.h>
 #include <IOKit/IOLib.h>
@@ -37,8 +37,8 @@
 
 #include <net80211/ieee80211_var.h>
 
-class MtkHalService : public OSObject {
-    OSDeclareAbstractStructors(MtkHalService)
+class Mt76HalService : public OSObject {
+    OSDeclareAbstractStructors(Mt76HalService)
     
 public:
     
@@ -101,4 +101,4 @@ private:
     lck_mtx_t *inner_lock;
 };
 
-#endif /* MtkHalService_hpp */
+#endif /* Mt76HalService_hpp */

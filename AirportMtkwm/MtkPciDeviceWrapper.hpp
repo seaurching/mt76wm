@@ -15,7 +15,7 @@
 #include <IOKit/IOTypes.h>
 #include <IOKit/IOTimerEventSource.h>
 
-#include <HAL/MtkHalService.hpp>
+#include <HAL/Mt76HalService.hpp>
 
 class MtkPciDeviceWrapper : public IOService {
     OSDeclareDefaultStructors(MtkPciDeviceWrapper)
@@ -30,7 +30,7 @@ public:
                                    IOService *   whatDevice ) override;
     
 public:
-    MtkHalService *fHalService;
+    Mt76HalService *fHalService;
     IOPCIDevice *pciNub;
 
 private:

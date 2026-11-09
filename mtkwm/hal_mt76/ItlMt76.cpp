@@ -220,8 +220,8 @@ void ItlMt76::detach(IOPCIDevice *device)
 {
     XYLog("%s\n", __FUNCTION__);
     mtk_pci_deinit(&com);
-    /* Release the net80211 timers (CTimeout instances) or kmutil
-     * unload fails with "class CTimeout has instances". */
+    /* Release the net80211 timers (MtkCTimeout instances) or kmutil
+     * unload fails with "class MtkCTimeout has instances". */
     mtk_net80211_ifdetach();
     mtk_mmio_register_windows(NULL, 0, 0);
     if (com.sc_intr) {

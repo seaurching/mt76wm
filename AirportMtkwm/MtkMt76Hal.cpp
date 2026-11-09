@@ -4,8 +4,8 @@
 #include "MtkMt76Hal.hpp"
 #include <net80211/ieee80211_var.h>
 
-#define super MtkHalService
-OSDefineMetaClassAndStructors(MtkMt76Hal, MtkHalService)
+#define super Mt76HalService
+OSDefineMetaClassAndStructors(MtkMt76Hal, Mt76HalService)
 
 char nmx_wifi_band;	/* NVRAM nullmoth-wifi-band: '5', '2' or 0 (prefer 5 GHz) */
 

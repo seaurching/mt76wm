@@ -936,7 +936,7 @@ ieee80211_mira_schedule_probe_timers(struct ieee80211_mira_node *mn,
                                      struct ieee80211_node *ni)
 {
     struct ieee80211_mira_goodput_stats *g;
-    CTimeout **to;
+    MtkCTimeout **to;
     int mcs;
     
     mcs = ieee80211_mira_next_intra_rate(mn, ni);

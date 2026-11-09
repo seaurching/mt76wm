@@ -470,7 +470,7 @@ private:
 
 private:
     AirportMtkwm *instance;
-    MtkHalService *fHalService;
+    Mt76HalService *fHalService;
     
     //IO80211
     struct ieee80211_node *fNextNodeToSend;

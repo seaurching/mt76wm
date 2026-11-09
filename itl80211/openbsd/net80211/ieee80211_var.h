@@ -391,7 +391,7 @@ extern const struct ieee80211_edca_ac_params
  * Entry in the fragment cache.
  */
 struct ieee80211_defrag {
-	CTimeout*	df_to;
+	MtkCTimeout*	df_to;
 	mbuf_t df_m;
 	u_int16_t	df_seq;
 	u_int8_t	df_frag;
@@ -465,7 +465,7 @@ struct ieee80211com {
     /* The channel width has changed (20<->2040) */
     void            (*ic_update_chw)(struct ieee80211com *);
     void            (*ic_event_handler)(struct ieee80211com *, int, void *);
-	CTimeout*		ic_bgscan_timeout;
+	MtkCTimeout*		ic_bgscan_timeout;
 	uint32_t		ic_bgscan_fail;
 	u_int8_t		ic_myaddr[IEEE80211_ADDR_LEN];
 	struct ieee80211_rateset ic_sup_rates[IEEE80211_MODE_MAX];
@@ -516,8 +516,8 @@ struct ieee80211com {
 	int			ic_bmissthres;	/* beacon miss threshold */
 	int			ic_mgt_timer;	/* mgmt timeout */
 #ifndef IEEE80211_STA_ONLY
-	CTimeout*		ic_inact_timeout; /* node inactivity timeout */
-	CTimeout*		ic_node_cache_timeout;
+	MtkCTimeout*		ic_inact_timeout; /* node inactivity timeout */
+	MtkCTimeout*		ic_node_cache_timeout;
 #endif
 	int			ic_des_esslen;
 	u_int8_t		ic_des_essid[IEEE80211_NWID_LEN];
@@ -545,11 +545,11 @@ struct ieee80211com {
 	u_int8_t		ic_psk[IEEE80211_PMK_LEN];
 	char			ic_sae_password[64];
 	uint8_t			ic_sae_password_len;
-	CTimeout*		ic_rsn_timeout;
+	MtkCTimeout*		ic_rsn_timeout;
 	int			ic_tkip_micfail;
 	u_int64_t		ic_tkip_micfail_last_tsc;
 #ifndef IEEE80211_STA_ONLY
-	CTimeout*		ic_tkip_micfail_timeout;
+	MtkCTimeout*		ic_tkip_micfail_timeout;
 #endif
 
 	TAILQ_HEAD(, ieee80211_pmk) ic_pmksa;	/* PMKSA cache */

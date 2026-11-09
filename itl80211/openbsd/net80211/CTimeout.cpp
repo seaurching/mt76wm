@@ -1,5 +1,5 @@
 //
-//  CTimeout.cpp
+//  MtkCTimeout.cpp
 //  AppleIntelWifiAdapter
 //
 //  Created by 钟先耀 on 2020/1/30.
@@ -20,15 +20,15 @@
 * GNU General Public License for more details.
 */
 
-#include <sys/CTimeout.hpp>
+#include <sys/MtkCTimeout.hpp>
 
-void CTimeout::timeoutOccurred(OSObject* owner, IOTimerEventSource* timer)
+void MtkCTimeout::timeoutOccurred(OSObject* owner, IOTimerEventSource* timer)
 {
 //    IOLog("itlwm %s\n", __FUNCTION__);
     if (owner == NULL) {
         IOLog("itlwm tm owner == NULL!!!\n");
     }
-    CTimeout *tm = OSDynamicCast(CTimeout, owner);
+    MtkCTimeout *tm = OSDynamicCast(MtkCTimeout, owner);
     if (tm == NULL) {
         IOLog("itlwm tm == NULL!!!\n");
         return;
@@ -38,18 +38,18 @@ void CTimeout::timeoutOccurred(OSObject* owner, IOTimerEventSource* timer)
     tm->to_func(tm->to_arg);
 }
 
-IOReturn CTimeout::timeout_add_msec(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3)
+IOReturn MtkCTimeout::timeout_add_msec(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3)
 {
     IOWorkLoop *wl = (IOWorkLoop*)arg1;
     int msecs = *(int*)arg2;
-    CTimeout **ccto = (CTimeout **)arg0;
+    MtkCTimeout **ccto = (MtkCTimeout **)arg0;
     
     if (ccto == NULL || *ccto == NULL) {
         return kIOReturnError;
     }
-    CTimeout *cto = *ccto;
+    MtkCTimeout *cto = *ccto;
     if (cto->tm == NULL) {
-        cto->tm = IOTimerEventSource::timerEventSource(cto, &CTimeout::timeoutOccurred);
+        cto->tm = IOTimerEventSource::timerEventSource(cto, &MtkCTimeout::timeoutOccurred);
         if (cto->tm == NULL) {
             return kIOReturnError;
         }
@@ -61,13 +61,13 @@ IOReturn CTimeout::timeout_add_msec(OSObject *target, void *arg0, void *arg1, vo
     return kIOReturnSuccess;
 }
 
-IOReturn CTimeout::timeout_del(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3)
+IOReturn MtkCTimeout::timeout_del(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3)
 {
-    CTimeout **ccto = (CTimeout **)arg0;
+    MtkCTimeout **ccto = (MtkCTimeout **)arg0;
     if (ccto == NULL || *ccto == NULL) {
         return kIOReturnSuccess;
     }
-    CTimeout *cto = *ccto;
+    MtkCTimeout *cto = *ccto;
     if (cto->tm == NULL || !cto->isPending) {
         return kIOReturnSuccess;
     }
@@ -76,14 +76,14 @@ IOReturn CTimeout::timeout_del(OSObject *target, void *arg0, void *arg1, void *a
     return kIOReturnSuccess;
 }
 
-IOReturn CTimeout::timeout_free(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3)
+IOReturn MtkCTimeout::timeout_free(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3)
 {
-    CTimeout **cto = (CTimeout **)arg0;
+    MtkCTimeout **cto = (MtkCTimeout **)arg0;
     IOWorkLoop *wl = (IOWorkLoop*)arg1;
     if (cto == NULL || *cto == NULL) {
         return kIOReturnSuccess;
     }
-    CTimeout *tm = *cto;
+    MtkCTimeout *tm = *cto;
     if (tm->tm != NULL) {
         wl->removeEventSource(tm->tm);
         tm->tm->release();
@@ -96,15 +96,15 @@ IOReturn CTimeout::timeout_free(OSObject *target, void *arg0, void *arg1, void *
 
 typedef void (*callback)(void *);
 
-IOReturn CTimeout::timeout_set(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3)
+IOReturn MtkCTimeout::timeout_set(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3)
 {
-    CTimeout *tm;
-    CTimeout **cto = (CTimeout **)arg0;
+    MtkCTimeout *tm;
+    MtkCTimeout **cto = (MtkCTimeout **)arg0;
     if (cto == NULL) {
         return kIOReturnError;
     }
     if ((*cto) == NULL) {
-        *cto = new CTimeout;
+        *cto = new MtkCTimeout;
     }
     tm = *cto;
     tm->isPending = false;
@@ -113,10 +113,10 @@ IOReturn CTimeout::timeout_set(OSObject *target, void *arg0, void *arg1, void *a
     return kIOReturnSuccess;
 }
 
-IOReturn CTimeout::timeout_pending(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3)
+IOReturn MtkCTimeout::timeout_pending(OSObject *target, void *arg0, void *arg1, void *arg2, void *arg3)
 {
-    CTimeout **cto = (CTimeout **)arg0;
-    CTimeout *tm;
+    MtkCTimeout **cto = (MtkCTimeout **)arg0;
+    MtkCTimeout *tm;
     if (cto == NULL) {
         return kIOReturnError;
     }

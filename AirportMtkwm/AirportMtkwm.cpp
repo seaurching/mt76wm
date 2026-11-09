@@ -17,7 +17,7 @@
 
 #define super IO80211Controller
 OSDefineMetaClassAndStructors(AirportMtkwm, IO80211Controller);
-OSDefineMetaClassAndStructors(CTimeout, OSObject)
+OSDefineMetaClassAndStructors(MtkCTimeout, OSObject)
 
 IO80211WorkQueue *_fWorkloop;
 IOCommandGate *_fCommandGate;

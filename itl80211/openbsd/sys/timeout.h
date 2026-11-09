@@ -50,7 +50,7 @@
 #include <sys/kernel.h>
 
 #define _KERNEL
-#include <sys/CTimeout.hpp>
+#include <sys/MtkCTimeout.hpp>
 #include <IOKit/IOTimerEventSource.h>
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/IOLocks.h>
@@ -60,14 +60,14 @@ void initTimeout(IOWorkLoop *workloop);
 void releaseTimeout();
 int splnet();
 void splx(int s);
-void timeout_set(CTimeout **t, void (*fn)(void *), void *arg);
-int timeout_add_msec(CTimeout **to, int msecs);
-int timeout_add_sec(CTimeout **to, int secs);
-int timeout_add_usec(CTimeout **to, int usecs);
-int timeout_del(CTimeout **to);
-int timeout_pending(CTimeout **to);
-int timeout_free(CTimeout **to);
+void timeout_set(MtkCTimeout **t, void (*fn)(void *), void *arg);
+int timeout_add_msec(MtkCTimeout **to, int msecs);
+int timeout_add_sec(MtkCTimeout **to, int secs);
+int timeout_add_usec(MtkCTimeout **to, int usecs);
+int timeout_del(MtkCTimeout **to);
+int timeout_pending(MtkCTimeout **to);
+int timeout_free(MtkCTimeout **to);
 
-int timeout_initialized(CTimeout **to);
+int timeout_initialized(MtkCTimeout **to);
 
 #endif	/* _SYS_TIMEOUT_H_ */

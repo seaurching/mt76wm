@@ -91,7 +91,7 @@ int  mtk_net80211_enable(struct mt76_softc *sc);
 void mtk_net80211_disable(struct mt76_softc *sc);
 
 /* Full net80211 teardown (ieee80211_ifdetach + timer frees).  Must run on
- * the unload path or the leaked CTimeout instances pin the kext. */
+ * the unload path or the leaked MtkCTimeout instances pin the kext. */
 void mtk_net80211_ifdetach(void);
 
 #ifdef __cplusplus
