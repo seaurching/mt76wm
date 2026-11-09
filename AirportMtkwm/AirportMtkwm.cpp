@@ -363,6 +363,9 @@ bool AirportMtkwm::start(IOService *provider)
         return false;
     }
     _fWorkloop->addEventSource(_fCommandGate);
+    /* Initialize the HAL before the networking family starts querying
+     * getFeatures()/getDriverInfo() through createMediumTables. */
+    fHalService->initWithController(this, _fWorkloop, _fCommandGate);
     const IONetworkMedium *primaryMedium;
     if (!createMediumTables(&primaryMedium) ||
         !setCurrentMedium(primaryMedium) || !setSelectedMedium(primaryMedium)) {
@@ -370,7 +373,6 @@ bool AirportMtkwm::start(IOService *provider)
         releaseAll();
         return false;
     }
-    fHalService->initWithController(this, _fWorkloop, _fCommandGate);
     fHalService->get80211Controller()->ic_event_handler = eventHandler;
 
     if (PE_parse_boot_argn("-novht", &boot_value, sizeof(boot_value)))

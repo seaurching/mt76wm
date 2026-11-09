@@ -56,77 +56,80 @@ bool MtkMt76Hal::initWithController(IOEthernetController *controller,
 
 bool MtkMt76Hal::attach(IOPCIDevice *device)
 {
-    return fInner->attach(device);
+    return fInner ? fInner->attach(device) : false;
 }
 
 void MtkMt76Hal::detach(IOPCIDevice *device)
 {
-    fInner->detach(device);
+    if (fInner)
+        fInner->detach(device);
 }
 
 IOReturn MtkMt76Hal::enable(IONetworkInterface *interface)
 {
-    return fInner->enable(interface);
+    return fInner ? fInner->enable(interface) : kIOReturnNotReady;
 }
 
 IOReturn MtkMt76Hal::disable(IONetworkInterface *interface)
 {
-    return fInner->disable(interface);
+    return fInner ? fInner->disable(interface) : kIOReturnNotReady;
 }
 
 struct ieee80211com *MtkMt76Hal::get80211Controller()
 {
-    return fInner->get80211Controller();
+    return fInner ? fInner->get80211Controller() : NULL;
 }
 
 const char *MtkMt76Hal::getFirmwareVersion()
 {
-    return fInner->getDriverInfo()->getFirmwareVersion();
+    return fInner ? fInner->getDriverInfo()->getFirmwareVersion() : "unloaded";
 }
 
 int16_t MtkMt76Hal::getBSSNoise()
 {
-    return fInner->getDriverInfo()->getBSSNoise();
+    return fInner ? fInner->getDriverInfo()->getBSSNoise() : -95;
 }
 
 bool MtkMt76Hal::is5GBandSupport()
 {
-    return fInner->getDriverInfo()->is5GBandSupport();
+    return fInner ? fInner->getDriverInfo()->is5GBandSupport() : true;
 }
 
 int MtkMt76Hal::getTxNSS()
 {
-    return fInner->getDriverInfo()->getTxNSS();
+    return fInner ? fInner->getDriverInfo()->getTxNSS() : 2;
 }
 
 const char *MtkMt76Hal::getFirmwareName()
 {
-    return fInner->getDriverInfo()->getFirmwareName();
+    return fInner ? fInner->getDriverInfo()->getFirmwareName() : "unknown";
 }
 
 UInt32 MtkMt76Hal::supportedFeatures()
 {
-    return fInner->getDriverInfo()->supportedFeatures();
+    return fInner ? fInner->getDriverInfo()->supportedFeatures() : 0;
 }
 
 const char *MtkMt76Hal::getFirmwareCountryCode()
 {
-    return fInner->getDriverInfo()->getFirmwareCountryCode();
+    return fInner ? fInner->getDriverInfo()->getFirmwareCountryCode() : "XX";
 }
 
 uint32_t MtkMt76Hal::getTxQueueSize()
 {
-    return fInner->getDriverInfo()->getTxQueueSize();
+    return fInner ? fInner->getDriverInfo()->getTxQueueSize() : 512;
 }
 
 void MtkMt76Hal::clearScanningFlags()
 {
-    fInner->getDriverController()->clearScanningFlags();
+    if (fInner)
+        fInner->getDriverController()->clearScanningFlags();
 }
 
 IOReturn MtkMt76Hal::setMulticastList(IOEthernetAddress *addr, int count)
 {
-    return fInner->getDriverController()->setMulticastList(addr, count);
+    return fInner ? fInner->getDriverController()->setMulticastList(addr, count)
+                  : kIOReturnSuccess;
 }
 
 void MtkMt76Hal::free()
@@ -155,11 +158,14 @@ void MtkUsbMt76Hal::setUSB(void *usbDevice, void *usbInterface, IOService *clien
 bool MtkUsbMt76Hal::attach(IOPCIDevice *device)
 {
     (void)device;   /* USB attaches through the host-device pair. */
+    if (!inner())
+        return false;
     return ((ItlMt7601u *)inner())->attachUSB(fUsbDevice, fUsbInterface, fClient);
 }
 
 void MtkUsbMt76Hal::detach(IOPCIDevice *device)
 {
     (void)device;
-    ((ItlMt7601u *)inner())->detachUSB();
+    if (inner())
+        ((ItlMt7601u *)inner())->detachUSB();
 }
