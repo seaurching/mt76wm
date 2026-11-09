@@ -283,12 +283,14 @@ ItlDriverController *ItlMt76::getDriverController()
 
 const char *ItlMt76::getFirmwareVersion()
 {
-    return "unloaded";
+    /* Match the mwx template values: the networking family and the WCL
+     * layer key behaviour off some of these. */
+    return "MT7921";
 }
 
 int16_t ItlMt76::getBSSNoise()
 {
-    return -95;
+    return 0;
 }
 
 bool ItlMt76::is5GBandSupport()
@@ -298,7 +300,7 @@ bool ItlMt76::is5GBandSupport()
 
 int ItlMt76::getTxNSS()
 {
-    return 2;
+    return 1;
 }
 
 const char *ItlMt76::getFirmwareName()
@@ -308,17 +310,19 @@ const char *ItlMt76::getFirmwareName()
 
 UInt32 ItlMt76::supportedFeatures()
 {
-    return 0;
+    /* Must match MtkMwx: 0 reads as "no capabilities" and leaves the
+     * IO80211 stack reporting the driver unavailable. */
+    return kIONetworkFeatureMultiPages;
 }
 
 const char *ItlMt76::getFirmwareCountryCode()
 {
-    return "XX";
+    return "IN";
 }
 
 uint32_t ItlMt76::getTxQueueSize()
 {
-    return 512;
+    return 256;
 }
 
 void ItlMt76::clearScanningFlags()

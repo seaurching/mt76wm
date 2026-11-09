@@ -82,12 +82,12 @@ struct ieee80211com *MtkMt76Hal::get80211Controller()
 
 const char *MtkMt76Hal::getFirmwareVersion()
 {
-    return fInner ? fInner->getDriverInfo()->getFirmwareVersion() : "unloaded";
+    return fInner ? fInner->getDriverInfo()->getFirmwareVersion() : "MT7921";
 }
 
 int16_t MtkMt76Hal::getBSSNoise()
 {
-    return fInner ? fInner->getDriverInfo()->getBSSNoise() : -95;
+    return fInner ? fInner->getDriverInfo()->getBSSNoise() : 0;
 }
 
 bool MtkMt76Hal::is5GBandSupport()
@@ -97,7 +97,7 @@ bool MtkMt76Hal::is5GBandSupport()
 
 int MtkMt76Hal::getTxNSS()
 {
-    return fInner ? fInner->getDriverInfo()->getTxNSS() : 2;
+    return fInner ? fInner->getDriverInfo()->getTxNSS() : 1;
 }
 
 const char *MtkMt76Hal::getFirmwareName()
@@ -112,12 +112,12 @@ UInt32 MtkMt76Hal::supportedFeatures()
 
 const char *MtkMt76Hal::getFirmwareCountryCode()
 {
-    return fInner ? fInner->getDriverInfo()->getFirmwareCountryCode() : "XX";
+    return fInner ? fInner->getDriverInfo()->getFirmwareCountryCode() : "IN";
 }
 
 uint32_t MtkMt76Hal::getTxQueueSize()
 {
-    return fInner ? fInner->getDriverInfo()->getTxQueueSize() : 512;
+    return fInner ? fInner->getDriverInfo()->getTxQueueSize() : 256;
 }
 
 void MtkMt76Hal::clearScanningFlags()
