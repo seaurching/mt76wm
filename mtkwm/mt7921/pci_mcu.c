@@ -10,6 +10,12 @@ int mt7921e_driver_own(struct mt792x_dev *dev)
 	u32 reg = mt7921_reg_map_l1(dev, MT_TOP_LPCR_HOST_BAND0);
 	int attempt;
 
+	/*
+	 * Dummy read first: mwx found this read is needed to make interrupts
+	 * work (MtkMwx.cpp mt7921_mcu_init).
+	 */
+	(void)mt76_rr(dev, reg);
+
 	for (attempt = 0; attempt < 3; attempt++) {
 		mt76_wr(dev, reg, MT_TOP_LPCR_HOST_DRV_OWN);
 		if (mt76_poll_msec(dev, reg, MT_TOP_LPCR_HOST_FW_OWN,
