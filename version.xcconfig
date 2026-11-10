@@ -7,5 +7,5 @@
 // The bump happens in a post-build step (scripts/bump_version.sh), so the
 // values here always describe the NEXT build.  Do not edit by hand.
 
-MODULE_VERSION = 0.82.0
-BUILD_COUNT = 82
+MODULE_VERSION = 0.83.0
+BUILD_COUNT = 83

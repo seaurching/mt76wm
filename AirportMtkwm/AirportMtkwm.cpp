@@ -42,6 +42,24 @@ void AirportMtkwm::roleTimerFired(OSObject *owner, IOTimerEventSource *sender)
     if (!self)
         return;
     self->checkInterfaceRole("timer", true);
+#ifdef AIRPORT_WCL
+    /*
+     * One-shot availability kick on the first role-timer tick: the family
+     * gates everything on isDriverAvailable which flips only after a
+     * DriverAvailable(1) notification.  The watchdog timer (the natural
+     * home) is armed only from the enable path, which itself waits for
+     * availability -- so kick from this timer, which start() always arms.
+     */
+    if (!self->wclReadyKicked) {
+        self->wclReadyKicked = true;
+        struct ieee80211com *kick = self->fHalService->get80211Controller();
+        XYLog("wcl-kick: ic=%p handler=%p\n", (void *)kick,
+              kick ? (void *)(uintptr_t)kick->ic_event_handler : NULL);
+        if (kick && kick->ic_event_handler)
+            kick->ic_event_handler(kick, IEEE80211_EVT_DRIVER_READY, NULL);
+        XYLog("wcl-kick: done\n");
+    }
+#endif
     if (self->roleChecks < sizeof(delays) / sizeof(delays[0]))
         sender->setTimeoutMS(delays[self->roleChecks++]);
 }
@@ -151,24 +169,6 @@ IOReturn AirportMtkwm::halDebugPollGated(OSObject *owner, void *, void *, void *
 
 void AirportMtkwm::watchdogAction(IOTimerEventSource *timer)
 {
-#ifdef AIRPORT_WCL
-    /*
-     * Deferred availability kick (one-shot, on the first watchdog tick):
-     * IO80211Family gates the power switch and every ioctl on
-     * isDriverAvailable, which flips only after a DriverAvailable(1)
-     * notification from EVT_DRIVER_READY.  Emitting it during start()
-     * raced the Skywalk object setup; the watchdog tick is well past that.
-     */
-    if (!wclReadyKicked) {
-        wclReadyKicked = true;
-        struct ieee80211com *kick = fHalService->get80211Controller();
-        XYLog("wcl-kick: ic=%p handler=%p\n", (void *)kick,
-              kick ? (void *)(uintptr_t)kick->ic_event_handler : NULL);
-        if (kick && kick->ic_event_handler)
-            kick->ic_event_handler(kick, IEEE80211_EVT_DRIVER_READY, NULL);
-        XYLog("wcl-kick: done\n");
-    }
-#endif
     struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
     (*ifp->if_watchdog)(ifp);
     /*
