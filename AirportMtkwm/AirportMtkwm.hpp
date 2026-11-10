@@ -253,7 +253,7 @@ public:
     IO80211SkywalkInterface *fNetIf;
 #endif
     IOWorkLoop *fWatchdogWorkLoop;
-    Mt76HalService *fHalService;
+    MtkHalService *fHalService;
     
     //IO80211
     uint8_t power_state;

@@ -1,7 +1,7 @@
 /*
  * MtkMt76Hal.hpp — HAL adapter for the native AirPort form (AirportMtkwm).
  *
- * Bridges the Mt76HalService contract (expected by the AirportMtkWlan-derived
+ * Bridges the MtkHalService contract (expected by the AirportMtkWlan-derived
  * front end) onto the existing ItlHalService facades (ItlMt76 for PCI,
  * ItlMt7601u for USB via MtkUsbMt76Hal).  Composition, not multiple
  * inheritance: both contracts derive from OSObject and a diamond would be a
@@ -16,12 +16,12 @@
 #include <IOKit/IOCommandGate.h>
 #include <IOKit/network/IOEthernetController.h>
 
-#include <HAL/Mt76HalService.hpp>
+#include <HAL/MtkHalService.hpp>
 #include <HAL/MtkDriverInfo.hpp>
 #include <HAL/MtkDriverController.hpp>
 #include "ItlMt76.hpp"
 
-class MtkMt76Hal : public Mt76HalService, public MtkDriverInfo, public MtkDriverController {
+class MtkMt76Hal : public MtkHalService, public MtkDriverInfo, public MtkDriverController {
     OSDeclareDefaultStructors(MtkMt76Hal)
 
 public:
@@ -30,7 +30,7 @@ public:
                                     IOWorkLoop *workloop,
                                     IOCommandGate *commandGate) override;
 
-    /* Mt76HalService */
+    /* MtkHalService */
     virtual bool attach(IOPCIDevice *device) override;
     virtual void detach(IOPCIDevice *device) override;
     virtual IOReturn enable(IONetworkInterface *interface) override;

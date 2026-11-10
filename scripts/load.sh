@@ -1,53 +1,39 @@
 #!/bin/sh
-# load.sh - load the mtkwm-airport kext (native AirPort form).
+# load.sh - load the native AirPort kext (mwx-based, AirportMtkWlan lineage).
 #   usage: scripts/load.sh
-# The old HeliPort form is gone (it shared OS class names with this kext and
-# alternating the two provoked zalloc type-confusion panics).
+# NOTE: every zalloc type-confusion panic so far happened while kernelmanagerd
+# was unloading an already-running IO80211 kext.  Only load from a clean
+# state (no WiFi kext loaded); if one is running, reboot first.
 
 cd "$(dirname "$0")/.." || exit 1
 
-TARGET="mtkwm-airport"
-BUNDLE_ID="com.mt76wm.mtkwm-airport"
-
 KEXT=""
 for p in \
-    "Build/Debug/$TARGET.kext" \
-    "Build/Products/Debug/$TARGET.kext" \
-    "Build/Products/Release/$TARGET.kext"
+    build/Debug/sequoia/AirportMtkWlan.kext \
+    build/Release/sequoia/AirportMtkWlan.kext
 do
     [ -d "$p" ] && KEXT="$p" && break
 done
 
 if [ -z "$KEXT" ]; then
-    echo "$TARGET.kext not found. Build first:"
-    echo "  xcodebuild -project mtkwm.xcodeproj -scheme $TARGET -configuration Debug SYMROOT=Build build"
+    echo "AirportMtkWlan.kext not found. Build first:"
+    echo "  MODULE_VERSION=2.0.0 AIRPORT_OS=sequoia ./build-macos.sh Debug AirportMtkWlan"
     exit 1
 fi
 
+BUNDLE_ID="com.flxxxxddd.AirportMtkWlan"
 echo "loading $KEXT ($BUNDLE_ID)"
-# Never yank the community AirportMtkWlan at runtime: every zalloc
-# type-confusion panic so far fired inside kernelmanagerd while an IO80211
-# kext was being unloaded alongside ours.  Refuse and let the user reboot
-# with it removed instead.
-if kmutil showloaded 2>/dev/null | grep -q com.flxxxxddd.AirportMtkWlan; then
-    echo "REFUSING: com.flxxxxddd.AirportMtkWlan is loaded."
+
+if kmutil showloaded 2>/dev/null | grep -q "$BUNDLE_ID"; then
+    echo "REFUSING: $BUNDLE_ID is already loaded."
     echo "Runtime-unloading an IO80211 kext has panicked kernelmanagerd every time."
-    echo "Reboot, then remove/keep it unloaded before loading mtkwm-airport."
+    echo "Reboot first, then run this from a clean state."
     exit 1
 fi
-for bid in com.mt76wm.mtkwm-airport com.mt76wm.mtkwm; do
-    sudo kmutil unload --bundle-identifier "$bid" 2>/dev/null \
-        || sudo kextunload -b "$bid" 2>/dev/null \
-        || true
-done
+
 sudo chown -R root:wheel "$KEXT"
 sudo chmod -R go-w "$KEXT"
-
-if command -v kmutil >/dev/null 2>&1; then
-    sudo kmutil load -p "$KEXT"
-else
-    sudo kextutil -v 6 "$KEXT"
-fi
+sudo kmutil load -p "$KEXT" 2>&1
 
 echo "--- check ---"
-kextstat 2>/dev/null | grep -i mtkwm || kmutil showloaded --bundle-identifier "$BUNDLE_ID" 2>/dev/null
+kextstat 2>/dev/null | grep -i mtk || kmutil showloaded --bundle-identifier "$BUNDLE_ID" 2>/dev/null

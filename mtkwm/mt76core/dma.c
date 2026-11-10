@@ -205,18 +205,18 @@ mt76_dma_read_dma_idx(struct mt76_queue *q, int fallback)
 static void
 mt76_dma_sync_idx(struct mt76_dev *dev, struct mt76_queue *q)
 {
-	if ((q->flags & MT_QFLAG_WED_RRO_EN) &&
-	    (!is_mt7992(dev) || !mt76_npu_device_active(dev)))
-		Q_WRITE(q, ring_size, MT_DMA_RRO_EN | q->ndesc);
-	else
-		Q_WRITE(q, ring_size, q->ndesc);
-
+	/* Program base and size before the indices (mwx order). */
 	if (mt76_queue_is_npu_tx(q)) {
 		writel(q->ndesc, &q->regs->ring_size);
 		writel(q->desc_dma, &q->regs->desc_base);
 	}
 
 	Q_WRITE(q, desc_base, q->desc_dma);
+	if ((q->flags & MT_QFLAG_WED_RRO_EN) &&
+	    (!is_mt7992(dev) || !mt76_npu_device_active(dev)))
+		Q_WRITE(q, ring_size, MT_DMA_RRO_EN | q->ndesc);
+	else
+		Q_WRITE(q, ring_size, q->ndesc);
 
 	q->head = mt76_dma_read_dma_idx(q, 0);
 	q->tail = q->head;
@@ -271,7 +271,9 @@ mt76_dma_add_rx_buf(struct mt76_dev *dev, struct mt76_queue *q,
 	}
 
 	desc = &q->desc[q->head];
-	ctrl = FIELD_PREP(MT_DMA_CTL_SD_LEN0, buf[0].len);
+	/* LAST_SEC0 marks the one and only segment (as mwx does): the RX
+	 * completion path derives `more' from this bit. */
+	ctrl = FIELD_PREP(MT_DMA_CTL_SD_LEN0, buf[0].len) | MT_DMA_CTL_LAST_SEC0;
 #ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
 	buf1 = FIELD_PREP(MT_DMA_CTL_SDP0_H, buf->addr >> 32);
 #endif
@@ -637,20 +639,9 @@ mt76_dma_dequeue(struct mt76_dev *dev, struct mt76_queue *q, bool flush,
 	} else {
 		if (flush)
 			q->desc[idx].ctrl |= cpu_to_le32(MT_DMA_CTL_DMA_DONE);
-		else if (!(q->desc[idx].ctrl & cpu_to_le32(MT_DMA_CTL_DMA_DONE))) {
-			/* mtk-dbg: what does the WPDMA actually write back? */
-			static int mtk_deq_dbg;
-			if (mtk_deq_dbg < 8) {
-				mtk_deq_dbg++;
-				XYLog("mtk-dbg-deq: q=%p idx=%d ctrl=%08x buf0=%08x "
-				      "cpu=%u dma=%u queued=%d\n",
-				      (void *)q, idx, le32_to_cpu(q->desc[idx].ctrl),
-				      le32_to_cpu(q->desc[idx].buf0),
-				      (unsigned)Q_READ(q, cpu_idx), (unsigned)Q_READ(q, dma_idx),
-				      q->queued);
-			}
-			return NULL;
-		}
+		/* Completion is judged by the DMA_IDX boundary in the caller
+		 * (mwx semantics); the DDONE bit is not trusted here. */
+		rmb();
 #ifdef CONFIG_NET_MEDIATEK_SOC_WED
 		/* on WED v3 the M_DONE bit signals that WED is done reading
 		 * the txfree descriptor; WED v2 does not set it
@@ -1062,12 +1053,11 @@ mt76_dma_rx_process(struct mt76_dev *dev, struct mt76_queue *q, int budget)
 			    !mt76_queue_is_wed_rro_rxdmad_c(q);
 	bool more;
 
-	if ((q->flags & MT_QFLAG_WED_RRO_EN) ||
-	    (IS_ENABLED(CONFIG_NET_MEDIATEK_SOC_WED) &&
-	     mt76_queue_is_wed_tx_free(q))) {
-		dma_idx = mt76_dma_read_dma_idx(q, q->tail);
-		check_ddone = true;
-	}
+	/* Completion boundary = the DMA_IDX register (mwx semantics): the
+	 * WPDMA advances it for every consumed descriptor.  Do not gate on
+	 * the DDONE bit in desc.ctrl -- on this hardware it is unreliable. */
+	dma_idx = mt76_dma_read_dma_idx(q, q->tail);
+	check_ddone = true;
 
 	while (done < budget) {
 		bool drop = false;

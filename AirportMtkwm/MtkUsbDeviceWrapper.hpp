@@ -14,7 +14,7 @@
 #include <IOKit/usb/IOUSBHostDevice.h>
 #include <IOKit/usb/IOUSBHostInterface.h>
 
-#include <HAL/Mt76HalService.hpp>
+#include <HAL/MtkHalService.hpp>
 
 class MtkUsbDeviceWrapper : public IOService {
     OSDeclareDefaultStructors(MtkUsbDeviceWrapper)
@@ -27,7 +27,7 @@ public:
     virtual IOReturn setPowerState(unsigned long powerStateOrdinal,
                                    IOService *whatDevice) override;
 
-    Mt76HalService *fHalService;
+    MtkHalService *fHalService;
     IOUSBHostDevice *usbNub;
     IOUSBHostInterface *usbInterface;
 

@@ -1,5 +1,5 @@
 //
-//  Mt76HalService.cpp
+//  MtkHalService.cpp
 //  SimpleMtkWlan
 //
 //  Created by laobamac (王孝慈) on 2026/3/18.
@@ -20,12 +20,12 @@
 * GNU General Public License for more details.
 */
 
-#include "Mt76HalService.hpp"
+#include "MtkHalService.hpp"
 
 #define super OSObject
-OSDefineMetaClassAndAbstractStructors(Mt76HalService, OSObject)
+OSDefineMetaClassAndAbstractStructors(MtkHalService, OSObject)
 
-bool Mt76HalService::
+bool MtkHalService::
 initWithController(IOEthernetController *controller, IOWorkLoop *workloop, IOCommandGate *commandGate)
 {
     this->controller = controller;
@@ -41,25 +41,25 @@ initWithController(IOEthernetController *controller, IOWorkLoop *workloop, IOCom
     return true;
 }
 
-IOEthernetController *Mt76HalService::
+IOEthernetController *MtkHalService::
 getController()
 {
     return this->controller;
 }
 
-IOCommandGate *Mt76HalService::
+IOCommandGate *MtkHalService::
 getMainCommandGate()
 {
     return this->mainCommandGate;
 }
 
-IOWorkLoop *Mt76HalService::
+IOWorkLoop *MtkHalService::
 getMainWorkLoop()
 {
     return this->mainWorkLoop;
 }
 
-void Mt76HalService::
+void MtkHalService::
 wakeupOn(void *ident)
 {
 //    XYLog("%s\n", __FUNCTION__);
@@ -93,7 +93,7 @@ gateSleepAction(OSObject *owner, void *ident, void *timo, void *gate, void *)
 }
 #endif
 
-int Mt76HalService::
+int MtkHalService::
 tsleep_nsec(void *ident, int priority, const char *wmesg, uint64_t timo)
 {
 //    XYLog("%s %s\n", __FUNCTION__, wmesg);
@@ -122,7 +122,7 @@ tsleep_nsec(void *ident, int priority, const char *wmesg, uint64_t timo)
     return err;
 }
 
-void Mt76HalService::
+void MtkHalService::
 free()
 {
     XYLog("%s\n", __PRETTY_FUNCTION__);
