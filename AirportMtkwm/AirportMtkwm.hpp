@@ -245,6 +245,7 @@ public:
     IOTimerEventSource *watchdogTimer;
     IOPCIDevice *pciNub;
     IOUSBHostDevice *usbNub;   /* non-NULL in the USB form */
+    bool wclReadyKicked = false;   /* one-shot deferred availability kick */
     IONetworkStats *fpNetStats;
     AirportMtkwmEthernetInterface *bsdInterface;
     #ifdef AIRPORT_WCL

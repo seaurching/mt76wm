@@ -147,6 +147,21 @@ IOReturn AirportMtkwm::halDebugPollGated(OSObject *owner, void *, void *, void *
 
 void AirportMtkwm::watchdogAction(IOTimerEventSource *timer)
 {
+#ifdef AIRPORT_WCL
+    /*
+     * Deferred availability kick (one-shot, on the first watchdog tick):
+     * IO80211Family gates the power switch and every ioctl on
+     * isDriverAvailable, which flips only after a DriverAvailable(1)
+     * notification from EVT_DRIVER_READY.  Emitting it during start()
+     * raced the Skywalk object setup; the watchdog tick is well past that.
+     */
+    if (!wclReadyKicked) {
+        wclReadyKicked = true;
+        struct ieee80211com *kick = fHalService->get80211Controller();
+        if (kick && kick->ic_event_handler)
+            kick->ic_event_handler(kick, IEEE80211_EVT_DRIVER_READY, NULL);
+    }
+#endif
     struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
     (*ifp->if_watchdog)(ifp);
     /*
