@@ -756,6 +756,8 @@ void AirportMtkwmSkywalkInterface::handleWCLEvent(int code, void *data)
             event.version = 3;
             event.available = ready;
             event.reason = ready ? 0xe0821803 : 0xe0821804;
+            XYLog("wcl-avail: post DriverAvailable(ready=%d) via %p\n",
+                  (int)ready, (void *)instance);
             instance->postMessage(this, AirportWCL::DriverAvailable, &event, sizeof(event), true);
             if (ready)
                 resumeWCLJoin();

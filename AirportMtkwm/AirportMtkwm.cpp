@@ -111,13 +111,17 @@ void AirportMtkwm::
 eventHandler(struct ieee80211com *ic, int msgCode, void *data)
 {
     AirportMtkwm *that = OSDynamicCast(AirportMtkwm, ic->ic_ac.ac_if.controller);
+    XYLog("evt-handler: code=%d that=%p ctrl=%p\n", msgCode, (void *)that,
+          (void *)ic->ic_ac.ac_if.controller);
 #ifdef AIRPORT_WCL
     if (!that)
         return;
 #endif
     IO80211SkywalkInterface *interface = that->fNetIf;
-    if (!interface)
+    if (!interface) {
+        XYLog("evt-handler: no fNetIf\n");
         return;
+    }
 #ifdef AIRPORT_WCL
     static_cast<AirportMtkwmSkywalkInterface *>(interface)->handleWCLEvent(msgCode, data);
 #else
@@ -158,8 +162,11 @@ void AirportMtkwm::watchdogAction(IOTimerEventSource *timer)
     if (!wclReadyKicked) {
         wclReadyKicked = true;
         struct ieee80211com *kick = fHalService->get80211Controller();
+        XYLog("wcl-kick: ic=%p handler=%p\n", (void *)kick,
+              kick ? (void *)(uintptr_t)kick->ic_event_handler : NULL);
         if (kick && kick->ic_event_handler)
             kick->ic_event_handler(kick, IEEE80211_EVT_DRIVER_READY, NULL);
+        XYLog("wcl-kick: done\n");
     }
 #endif
     struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
