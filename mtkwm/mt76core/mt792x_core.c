@@ -1028,14 +1028,20 @@ int __mt792xe_mcu_drv_pmctrl(struct mt792x_dev *dev)
 {
 	int i, err = 0;
 
+	/* NOTE: the eee2ac7 "already owned -> early exit" check was tried
+	 * here and reverted together with the one in mt7921e_driver_own:
+	 * a spurious 0 readback during sleep skips the handshake and every
+	 * downstream consumer dies.  Always handshake. */
 	for (i = 0; i < MT792x_DRV_OWN_RETRY_COUNT; i++) {
 		mt76_wr(dev, MT_CONN_ON_LPCTL, PCIE_LPCR_HOST_CLR_OWN);
 
 		if (dev->aspm_supported)
 			usleep_range(2000, 3000);
 
+		/* 50 -> 500 ms per try: 50 ms gives up while the ROM is still
+		 * coming out of fw_own deep sleep (upstream eee2ac7). */
 		if (mt76_poll_msec_tick(dev, MT_CONN_ON_LPCTL,
-					PCIE_LPCR_HOST_OWN_SYNC, 0, 50, 1))
+					PCIE_LPCR_HOST_OWN_SYNC, 0, 500, 1))
 			break;
 	}
 

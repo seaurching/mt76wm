@@ -32,7 +32,10 @@ static const struct pci_device_id mt7921_pci_device_table[] = {
 	{ },
 };
 
-static bool mt7921_disable_aspm;
+/* XNU: default true -- macOS bring-up wants ASPM/L1SS off (Ryzen throughput
+ * and DMA stability, upstream e4a304a/eee2ac7).  Pass -mtkallowaspm to keep
+ * it on; the policy itself lives in mtk_xnu_disable_aspm (ItlMt76.cpp). */
+static bool mt7921_disable_aspm = true;
 module_param_named(disable_aspm, mt7921_disable_aspm, bool, 0644);
 MODULE_PARM_DESC(disable_aspm, "disable PCI ASPM support");
 
@@ -452,6 +455,13 @@ static int mt7921_pci_probe(struct pci_dev *pdev,
 	mdev->rev = (chipid << 16) |
 		    (mt7921_l1_rr(dev, MT_HW_REV) & 0xff);
 	dev_info(mdev->dev, "ASIC revision: %04x\n", mdev->rev);
+
+	/* mwx attach order: chipid -> MT_MCU2HOST_SW_INT_ENA=WAKE_RX_PCIE ->
+	 * wfsys_reset.  The wake path must be armed before the subsystem
+	 * reset so the ROM's wake signalling can reach the host during
+	 * bring-up (the working reference enables it here; we used to only
+	 * set it later in dma_enable). */
+	mt76_set(dev, MT_MCU2HOST_SW_INT_ENA, MT_MCU_CMD_WAKE_RX_PCIE);
 
 	ret = mt792x_wfsys_reset(dev);
 	if (ret)

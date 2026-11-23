@@ -415,9 +415,33 @@ mt76_dma_tx_cleanup_idx(struct mt76_dev *dev, struct mt76_queue *q, int idx,
 	memset(e, 0, sizeof(*e));
 }
 
+/*
+ * x86 cache writeback for descriptor rings, called before every kick.
+ *
+ * The DMA alloc shim requests kIOMapInhibitCache (uncached) for descriptor
+ * memory, but the WPDMA behaves as if it never sees our descriptor writes:
+ * every ring's dma_idx stays 0 while cpu_idx advances, i.e. the engine
+ * keeps reading the allocator's initial ctrl=DMA_DONE ("not host-ready")
+ * and fetches nothing.  The working mwx reference never trusts the mapping
+ * -- it wraps every descriptor write in BUS_DMASYNC_PREWRITE/POSTWRITE.
+ * clflush is a harmless no-op on truly uncached memory, so this doubles as
+ * the A/B discriminator for the mapping-cache-mode hypothesis.
+ */
+static void mtk_clflush_range(void *p, size_t len)
+{
+	uintptr_t a = (uintptr_t)p & ~(uintptr_t)63;
+	uintptr_t e = ((uintptr_t)p + len + 63) & ~(uintptr_t)63;
+
+	for (; a < e; a += 64)
+		__asm__ volatile("clflush (%0)" :: "r"(a) : "memory");
+}
+
 static void
 mt76_dma_kick_queue(struct mt76_dev *dev, struct mt76_queue *q)
 {
+	if (q->desc && q->ndesc)
+		mtk_clflush_range((void *)(uintptr_t)q->desc,
+				  q->ndesc * sizeof(*q->desc));
 	wmb();
 	if (mt76_queue_is_emi(q))
 		*q->emi_cpu_idx = cpu_to_le16(q->head);

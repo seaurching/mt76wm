@@ -3352,10 +3352,29 @@ int mt76_connac2_load_patch(struct mt76_dev *dev, const char *fw_name)
 	if (ret)
 		goto out;
 
-	if (mt76_connac2_fw_check(fw, NULL)) {
-		dev_err(dev->dev, "Invalid firmware\n");
-		ret = -EINVAL;
-		goto out;
+	/* Patch blobs use the header format (patch_hdr + patch_sec[]), NOT the
+	 * connac2 RAM-image end trailer that mt76_connac2_fw_check() validates.
+	 * Running fw_check here parsed the tail of a valid patch as a garbage
+	 * trailer and rejected it ("Invalid firmware") the moment sem came
+	 * alive.  Keep the openwrt-style hardening, in the correct format:
+	 * bound the region table against fw->size. */
+	{
+		const struct mt76_connac2_patch_hdr *phdr =
+			(const struct mt76_connac2_patch_hdr *)fw->data;
+		u32 n_region;
+
+		if (fw->size < sizeof(*phdr)) {
+			dev_err(dev->dev, "Invalid firmware patch\n");
+			ret = -EINVAL;
+			goto out;
+		}
+		n_region = be32_to_cpu(phdr->desc.n_region);
+		if (n_region > (fw->size - sizeof(*phdr)) /
+			       sizeof(struct mt76_connac2_patch_sec)) {
+			dev_err(dev->dev, "Invalid firmware patch region table\n");
+			ret = -EINVAL;
+			goto out;
+		}
 	}
 
 	hdr = (const struct mt76_connac2_patch_hdr *)fw->data;

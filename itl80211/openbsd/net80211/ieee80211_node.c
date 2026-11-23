@@ -1641,12 +1641,15 @@ ieee80211_choose_rsnparams(struct ieee80211com *ic)
     
     /* filter out unsupported AKMPs */
     ni->ni_rsnakms &= ic->ic_rsnakms;
-    /* prefer SAE / FT-SAE, then PSK / FT-PSK, then 802.1X / FT-802.1X */
-    if (ni->ni_rsnakms & IEEE80211_AKM_FT_SAE) {
-        ni->ni_rsnakms = IEEE80211_AKM_FT_SAE;
-    } else if (ni->ni_rsnakms & IEEE80211_AKM_SAE) {
-        ni->ni_rsnakms = IEEE80211_AKM_SAE;
-    } else if ((ic->ic_flags & IEEE80211_F_PSK) && (ni->ni_rsnakms &
+    /* prefer PSK / FT-PSK when a PSK is configured, then SAE / FT-SAE,
+     * then 802.1X / FT-802.1X.
+     * mt76wm: the firmware/PAE path is WPA2-only (upstream mwx
+     * classifyLegacyAuth maps SAE/FT-SAE/FT-* back to WPA2-PSK), so a
+     * WPA2/WPA3 transition hotspot (phone hotspots!) must join via PSK.
+     * The upstream SAE-first order picked Dragonfly and failed there.
+     * SAE-only networks still land on the SAE branch and fail cleanly
+     * until WPA3 is implemented. */
+    if ((ic->ic_flags & IEEE80211_F_PSK) && (ni->ni_rsnakms &
                                              (IEEE80211_AKM_PSK | IEEE80211_AKM_SHA256_PSK | IEEE80211_AKM_FT_PSK))) {
         /* AP supports PSK AKMP and a PSK is configured */
         if (ni->ni_rsnakms & IEEE80211_AKM_FT_PSK)
@@ -1655,6 +1658,10 @@ ieee80211_choose_rsnparams(struct ieee80211com *ic)
             ni->ni_rsnakms = IEEE80211_AKM_SHA256_PSK;
         else
             ni->ni_rsnakms = IEEE80211_AKM_PSK;
+    } else if (ni->ni_rsnakms & IEEE80211_AKM_FT_SAE) {
+        ni->ni_rsnakms = IEEE80211_AKM_FT_SAE;
+    } else if (ni->ni_rsnakms & IEEE80211_AKM_SAE) {
+        ni->ni_rsnakms = IEEE80211_AKM_SAE;
     } else {
         if (ni->ni_rsnakms & IEEE80211_AKM_FT_8021X)
             ni->ni_rsnakms = IEEE80211_AKM_FT_8021X;

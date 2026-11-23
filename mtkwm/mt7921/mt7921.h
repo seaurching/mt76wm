@@ -20,7 +20,11 @@
 #define MT7921_TX_FWDL_RING_SIZE	128
 
 #define MT7921_RX_RING_SIZE		1536
-#define MT7921_RX_MCU_RING_SIZE		8
+/* 8 -> 256: align with the working mwx reference (sc_rxmcuq, MtkMwx.cpp
+ * mwx_dma_alloc).  Linux upstream uses 8; on macOS the firmware-download
+ * burst plus event traffic outgrows it, and the sem response forensic
+ * (testing-log) wants spare RX slots during bring-up. */
+#define MT7921_RX_MCU_RING_SIZE		256
 #define MT7921_RX_MCU_WA_RING_SIZE	512
 
 /* MT7902 Rx Ring0 is for both Rx Event and Tx Done Event */

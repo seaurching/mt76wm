@@ -23,6 +23,18 @@ int mtk_pci_init(struct mt76_softc *sc);
 
 void mtk_pci_deinit(struct mt76_softc *sc);
 
+/* PCIe ASPM/L1SS control (XNU platform layer, ItlMt76.cpp).  Ported from
+ * AirportMtkWlan mwx_pci_disable_aspm (e4a304a/eee2ac7): on Ryzen leaving
+ * L1SS/L1 active caps throughput ~40 Mbps and stalls DMA completions. */
+void mtk_xnu_disable_aspm(void);
+bool mtk_xnu_aspm_supported(void);
+
+/* MSI address/data snapshot + restore (ItlMt76.cpp).  Call once after the
+ * PCIMessaged vector is registered to snapshot; a later call after WFSYS
+ * reset restores the capability if the reset cleared it (upstream
+ * mwx_pci_irq_state). */
+void mtk_xnu_msi_rearm(void);
+
 /* Interrupt filter (primary context): returns true if the bottom half
  * (mtk_intr_action) should run. */
 bool mtk_intr_filter(struct mt76_softc *sc);

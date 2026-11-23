@@ -71,9 +71,150 @@ bool ItlMt76::mt76_match(IOPCIDevice *device)
     return false;
 }
 
+/* ===================== PCIe ASPM / L1SS control =====================
+ *
+ * Ported from AirportMtkWlan mwx_pci_disable_aspm (commits e4a304a /
+ * eee2ac7).  On Ryzen + MT7921/MT7922 systems leaving L1SS/L1 active caps
+ * throughput near 40 Mbps and stalls DMA completions.  Rules learned
+ * upstream the hard way:
+ *  - PCIe Base Spec 5.4.1.3: disable ASPM on the Downstream Port (parent)
+ *    BEFORE the Upstream Port (endpoint).
+ *  - AMD parent bridges (vendor 0x1022) are NEVER touched unless
+ *    -mtkforceparentaspm: macOS does not own native PCIe PM via ACPI _OSC
+ *    there, and writing root-port registers can hard-freeze the link once
+ *    DMA starts.
+ *  - Parent bridges never get their L1SS registers modified (matches
+ *    Linux mt76_pci_disable_aspm).
+ *  - -mtkallowaspm keeps ASPM on entirely; -mtknoparentaspm skips the
+ *    parent only.
+ */
+static IOPCIDevice *s_aspm_dev = NULL;
+
+extern "C" int PE_parse_boot_argn(const char *, void *, int);
+
+static void mtk_clear_aspm_dev(IOPCIDevice *d, const char *role, bool clear_l1ss)
+{
+    if (d == NULL)
+        return;
+    if (clear_l1ss) {
+        IOByteCount l1ss = 0;
+        if (d->extendedFindPCICapability(kIOPCIExpressL1PMSubstatesCapability,
+                                         &l1ss) != 0 && l1ss >= 0x100) {
+            UInt32 ctl1 = d->extendedConfigRead32(l1ss + 0x08);
+            if (ctl1 & 0x0000000fU) {
+                d->extendedConfigWrite32(l1ss + 0x08, ctl1 & ~0x0000000fU);
+                XYLog("aspm(%s): L1SS CTL1 0x%08x -> 0x%08x\n", role, ctl1,
+                      (UInt32)d->extendedConfigRead32(l1ss + 0x08));
+            }
+        }
+    }
+    UInt8 pcie = 0;
+    if (d->findPCICapability(kIOPCICapabilityIDPCIExpress, &pcie) != 0 && pcie != 0) {
+        UInt16 lnkctl = d->configRead16(pcie + 0x10);
+        if (lnkctl & 0x0003U) {
+            d->configWrite16(pcie + 0x10, (UInt16)(lnkctl & ~0x0003U));
+            XYLog("aspm(%s): LNKCTL 0x%04x -> 0x%04x\n", role, lnkctl,
+                  d->configRead16(pcie + 0x10));
+        }
+    }
+}
+
+extern "C" void mtk_xnu_disable_aspm(void)
+{
+    IOPCIDevice *dev = s_aspm_dev;
+    int allow = 0, no_parent = 0, force_parent = 0;
+
+    if (dev == NULL || PE_parse_boot_argn("-mtkallowaspm", &allow, sizeof(allow)))
+        return;
+    PE_parse_boot_argn("-mtknoparentaspm", &no_parent, sizeof(no_parent));
+    PE_parse_boot_argn("-mtkforceparentaspm", &force_parent, sizeof(force_parent));
+
+    IOPCIDevice *parent = NULL;
+    for (IORegistryEntry *e = dev->getParentEntry(gIOServicePlane);
+         e != NULL; e = e->getParentEntry(gIOServicePlane)) {
+        parent = OSDynamicCast(IOPCIDevice, e);
+        if (parent != NULL)
+            break;
+    }
+    if (parent != NULL && !no_parent) {
+        UInt16 parent_vendor = parent->configRead16(kIOPCIConfigVendorID);
+        if (parent_vendor == 0x1022 && !force_parent) {
+            XYLog("aspm: skipping parent bridge for AMD vendor 0x1022\n");
+        } else {
+            mtk_clear_aspm_dev(parent, "parent", false);
+        }
+    }
+    mtk_clear_aspm_dev(dev, "ep", true);
+}
+
+extern "C" bool mtk_xnu_aspm_supported(void)
+{
+    /* ASPM is disabled outright and never re-enabled, so mt76's dynamic
+     * aspm_supported power-save toggling stays off. */
+    return false;
+}
+
+/* ===================== MSI re-arm after WFSYS reset =====================
+ *
+ * WFSYS reset can clear the MSI capability's enable bit (upstream
+ * mwx_pci_irq_state).  IOPCIFamily programmed the address/data when the
+ * PCIMessaged vector was registered and does not re-program them, so we
+ * snapshot them while enabled and restore them if a reset wiped the
+ * enable.  Never write address/data blind -- that is the D1 trap (MSI
+ * messages to an unprogrammed address stop INTx and can stall WPDMA).
+ */
+#define kMtkPCICapIDMSI 0x05
+
+extern "C" void mtk_xnu_msi_rearm(void)
+{
+    static bool saved = false;
+    static UInt32 s_addr_lo = 0, s_addr_hi = 0;
+    static UInt16 s_ctrl = 0, s_data = 0;
+    static bool s_64 = false;
+
+    IOPCIDevice *dev = s_aspm_dev;
+    UInt8 cap = 0;
+
+    if (dev == NULL)
+        return;
+    if (!dev->findPCICapability(kMtkPCICapIDMSI, &cap) || cap == 0)
+        return;
+
+    UInt16 ctrl = dev->configRead16(cap + 0x02);
+    if (ctrl & 0x0001) {                 /* enabled: keep a snapshot */
+        s_64 = (ctrl & 0x0080) != 0;
+        s_ctrl = ctrl;
+        s_addr_lo = dev->configRead32(cap + 0x04);
+        if (s_64) {
+            s_addr_hi = dev->configRead32(cap + 0x08);
+            s_data = dev->configRead16(cap + 0x0c);
+        } else {
+            s_addr_hi = 0;
+            s_data = dev->configRead16(cap + 0x08);
+        }
+        saved = true;
+        return;
+    }
+    if (!saved)
+        return;                          /* never saw it programmed; IOPCIFamily's job */
+
+    /* Enable got cleared (WFSYS reset): restore what IOPCIFamily set up. */
+    dev->configWrite32(cap + 0x04, s_addr_lo);
+    if (s_64) {
+        dev->configWrite32(cap + 0x08, s_addr_hi);
+        dev->configWrite16(cap + 0x0c, s_data);
+    } else {
+        dev->configWrite16(cap + 0x08, s_data);
+    }
+    dev->configWrite16(cap + 0x02, (UInt16)(s_ctrl | 0x0001));
+    XYLog("msi: restored after reset (cap 0x%x ctrl 0x%04x addr 0x%08x)\n",
+          cap, s_ctrl, s_addr_lo);
+}
+
 bool ItlMt76::attach(IOPCIDevice *device)
 {
     com.sc_dev = device;
+    s_aspm_dev = device;
     com.sc_ether = getController();
     fNRegWins = 0;
     memset(fRegWinMaps, 0, sizeof(fRegWinMaps));
@@ -198,6 +339,10 @@ bool ItlMt76::attach(IOPCIDevice *device)
     }
     com.sc_intr->enable();
 
+    /* Snapshot the MSI address/data now that IOPCIFamily has programmed
+     * them (mtk_xnu_msi_rearm restores them if a WFSYS reset wipes them). */
+    mtk_xnu_msi_rearm();
+
     /* Hardware bring-up: family dispatch -> DMA rings, chip id,
      * MCU/firmware (ported mt76 code). */
     if (mtk_attach(&com, device->configRead16(kIOPCIConfigVendorID),
@@ -219,6 +364,7 @@ bool ItlMt76::attach(IOPCIDevice *device)
 void ItlMt76::detach(IOPCIDevice *device)
 {
     XYLog("%s\n", __FUNCTION__);
+    s_aspm_dev = NULL;
     mtk_pci_deinit(&com);
     /* Release the net80211 timers (MtkCTimeout instances) or kmutil
      * unload fails with "class MtkCTimeout has instances". */

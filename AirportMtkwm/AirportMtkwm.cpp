@@ -1081,6 +1081,38 @@ getCARD_CAPABILITIES(OSObject *object,
     // WCL uses this capability together with the BSS HE IE for PHY reporting.
     if (caps & IEEE80211_C_HE)
         cd->capabilities[17] |= 0x80;
+
+    /* Capability bits calibrated to upstream AirportMtkWlan 3526eb7 final
+     * state (the v1.7.2/v2.0 "宁少勿多" lesson, then eee2ac7/6223ab4/650b6ec
+     * re-added WITH gates -- unconditional over-advertising is what broke
+     * the Skywalk power state machine, not the bits themselves). */
+    // Capability 0 (byte 0, bit 0): DeviceCapability flag queried by wifip2pd
+    cd->capabilities[0] |= (1 << 0);
+
+    int no_awdl = 0, allow_rsdb = 0;
+    PE_parse_boot_argn("-mtknoawdl", &no_awdl, sizeof(no_awdl));
+    PE_parse_boot_argn("-mtkrsdb", &allow_rsdb, sizeof(allow_rsdb));
+
+    if (!no_awdl) {
+        // Capabilities required by wifip2pd to authorize AWDL virtual interface:
+        // 1. Byte 4 bit 0: Authorizes creation of role 6 (APPLE80211_VIF_AWDL)!
+        cd->capabilities[4] |= (1 << 0);
+        // 2. Byte 9 bit 0: Authorizes creation of role 9 (Infrastructure AWDL / NAN)!
+        cd->capabilities[9] |= (1 << 0);
+    }
+    cd->capabilities[9] |= (1 << 1);
+    // 3. Byte 9 bit 3: WPA3-SAE
+    cd->capabilities[9] |= (1 << 3);
+    // 4. Byte 6 bit 0 + bit 4: PMF / MFP capability
+    cd->capabilities[6] |= (1 << 0) | (1 << 4);
+    // Wake on Wireless
+    cd->capabilities[2] |= (1 << (APPLE80211_CAP_WOW - 16));
+    if (allow_rsdb && pciNub) {
+        UInt16 devid = pciNub->configRead16(kIOPCIConfigDeviceID);
+        if (devid == 0x7922 || devid == 0x0616) {   /* MT7922 / RZ616 */
+            cd->capabilities[7] |= (1 << 1); // SDB (WCLDeviceConfiguration::isSdbSupported)
+        }
+    }
 #else
     cd->capabilities[2] = 0xFF; // BURST, WME, SHORT_GI_40MHZ, SHORT_GI_20MHZ, WOW, TSN, ?, ?
     cd->capabilities[3] = 0x2B;
@@ -1367,9 +1399,11 @@ bool AirportMtkwm::initPCIPowerManagment(IOPCIDevice *provider)
     reg16 &= ~kIOPCICommandIOSpace;  // disable I/O space
 
     provider->configWrite16( kIOPCIConfigCommand, reg16 );
-    provider->findPCICapability(kIOPCIPowerManagementCapability,
-                                &pmPCICapPtr);
-    if (pmPCICapPtr) {
+    pmPCICapPtr = 0;
+    /* Guard the offset: findPCICapability can fail without writing the out
+     * param; an uninitialized offset would hit random config registers. */
+    if (provider->findPCICapability(kIOPCIPowerManagementCapability,
+                                    &pmPCICapPtr) && pmPCICapPtr) {
         UInt16 pciPMCReg = provider->configRead32( pmPCICapPtr ) >> 16;
         if (pciPMCReg & kPCIPMCPMESupportFromD3Cold)
             magicPacketSupported = true;

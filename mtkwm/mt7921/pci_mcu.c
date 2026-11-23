@@ -13,14 +13,25 @@ int mt7921e_driver_own(struct mt792x_dev *dev)
 	/*
 	 * Dummy read first: mwx found this read is needed to make interrupts
 	 * work (MtkMwx.cpp mt7921_mcu_init).
+	 *
+	 * NOTE: an "already owned -> early exit" check (upstream eee2ac7) was
+	 * tried here and REVERTED: when the subsystem is asleep or
+	 * clock-gated the register can read back 0 spuriously, the early
+	 * exit then reports success without waking anything, and every
+	 * downstream consumer (WFDMA fetch, MCU sem) dies silently.  The
+	 * historical evidence is "mt7921e_driver_own -> 0" with zero attempt
+	 * logs while sem never answers.  Always run the handshake instead.
 	 */
 	(void)mt76_rr(dev, reg);
 
 	for (attempt = 0; attempt < 3; attempt++) {
 		mt76_wr(dev, reg, MT_TOP_LPCR_HOST_DRV_OWN);
 		if (mt76_poll_msec(dev, reg, MT_TOP_LPCR_HOST_FW_OWN,
-				   0, 500))
+				   0, 500)) {
+			XYLog("mtk-dbg: driver_own handshake ok (attempt %d)\n",
+			      attempt);
 			return 0;
+		}
 		XYLog("mtk-dbg: driver_own attempt %d: lpcr=0x%x (reg 0x%x), value now 0x%x\n",
 		      attempt, (unsigned)MT_TOP_LPCR_HOST_DRV_OWN,
 		      reg, mt76_rr(dev, reg));

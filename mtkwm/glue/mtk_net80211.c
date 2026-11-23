@@ -862,14 +862,17 @@ sendit:
                 struct ieee80211_key *k =
                     ieee80211_get_txkey(ic, wh2, ni);
 
-                if (k != NULL && (k->k_flags & IEEE80211_KEY_SWCRYPTO)) {
+                /* HWCRYPTO wins over SWCRYPTO: a key can carry a software
+                 * RX fallback (mtk_set_key always builds one) while the
+                 * firmware WTBL still does the TX encryption. */
+                if (k != NULL && (k->k_flags & IEEE80211_KEY_HWCRYPTO)) {
+                    mtk_fill_key_desc(k, &kd);
+                    hwkey = &kd;
+                } else if (k != NULL && (k->k_flags & IEEE80211_KEY_SWCRYPTO)) {
                     m = ieee80211_encrypt(ic, m, k);
                     if (m == NULL)
                         continue;   /* freed by ieee80211_encrypt() */
                     len = mbuf_pkthdr_len(m);
-                } else if (k != NULL) {
-                    mtk_fill_key_desc(k, &kd);
-                    hwkey = &kd;
                 }
             }
             ck.m = m;
@@ -1066,12 +1069,28 @@ mtk_set_key(struct ieee80211com *ic, struct ieee80211_node *ni,
     if (d.cipher == MTK_KEY_CIPHER_NONE)
         return ieee80211_set_key(ic, ni, k);    /* software crypto */
 
+    /*
+     * Always build the software crypto context first (upstream mwx_set_key):
+     * MT7921 does not reliably decrypt group-addressed frames with the GTK
+     * installed in hardware -- those arrive without IEEE80211_RXI_HWDEC and
+     * ieee80211_decrypt() drops them as wepfail unless the key carries a
+     * software context (broadcast ARP / DHCP never reach the stack).  The
+     * pairwise key needs the same fallback: after a reassociation the chip
+     * sometimes stops decrypting unicast frames too.  TX still prefers the
+     * firmware WTBL when the hardware install below succeeds (see the M6
+     * TX crypto branch; HWCRYPTO wins over SWCRYPTO there).
+     */
+    if (!(k->k_flags & IEEE80211_KEY_SWCRYPTO))
+        ieee80211_set_key(ic, ni, k);
+
     /* PTKs ride the peer node; GTK/IGTK ride the BSS wcid. */
     key_ni = (k->k_flags & (IEEE80211_KEY_GROUP | IEEE80211_KEY_IGTK)) ?
              NULL : (void *)ni;
     ret = mtk_key_add(g_n.mdev, key_ni, &d);
     if (ret == -EOPNOTSUPP || ret == -ENXIO || ret == -ENOENT)
-        return ieee80211_set_key(ic, ni, k);    /* software crypto */
+        return 0;                       /* software crypto only (SWCRYPTO set) */
+    if (ret == 0)
+        k->k_flags |= IEEE80211_KEY_HWCRYPTO;
     /* itl80211 convention: 0 / EBUSY / positive errno. */
     return ret < 0 ? -ret : ret;
 }
@@ -1083,13 +1102,16 @@ mtk_delete_key(struct ieee80211com *ic, struct ieee80211_node *ni,
     struct mtk_key_desc d;
     void *key_ni;
 
+    if (k->k_flags & IEEE80211_KEY_HWCRYPTO) {
+        mtk_fill_key_desc(k, &d);
+        key_ni = (k->k_flags & (IEEE80211_KEY_GROUP | IEEE80211_KEY_IGTK)) ?
+                 NULL : (void *)ni;
+        if (mtk_key_delete(g_n.mdev, key_ni, &d) != 0)
+            XYLog("%s: key delete failed (id %u)\n", __FUNCTION__, d.key_id);
+        k->k_flags &= ~IEEE80211_KEY_HWCRYPTO;
+    }
     if (k->k_flags & IEEE80211_KEY_SWCRYPTO) {
         ieee80211_delete_key(ic, ni, k);
         return;
     }
-    mtk_fill_key_desc(k, &d);
-    key_ni = (k->k_flags & (IEEE80211_KEY_GROUP | IEEE80211_KEY_IGTK)) ?
-             NULL : (void *)ni;
-    if (mtk_key_delete(g_n.mdev, key_ni, &d) != 0)
-        XYLog("%s: key delete failed (id %u)\n", __FUNCTION__, d.key_id);
 }

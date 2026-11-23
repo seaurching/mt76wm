@@ -48,36 +48,45 @@ IOWorkLoop *MtkPciDeviceWrapper::getWorkLoop() const
 IOService* MtkPciDeviceWrapper::
 probe(IOService *provider, SInt32 *score)
 {
-    /* Safe boot: -nvoff (OpenCore "Start once without NVIDIA driver") or -mtkwlanoff leaves the card alone. */
+    /* Safe boot: -mtkwlanoff leaves the card alone. Do NOT key off -nvoff:
+     * that is OpenCore's common "start once without NVIDIA driver" flag, and
+     * coupling to it silently kills Wi-Fi (upstream 3907c5c). */
     int off = 0;
-    if (PE_parse_boot_argn("-nvoff", &off, sizeof(off)) || PE_parse_boot_argn("-mtkwlanoff", &off, sizeof(off)))
+    if (PE_parse_boot_argn("-mtkwlanoff", &off, sizeof(off)))
         return NULL;
     mtk_dbg_set_nub(provider);
     XYLog("%s\n", __PRETTY_FUNCTION__);
     bool isMatch = false;
     super::probe(provider, score);
-    UInt8 msiCap;
-    UInt8 msixCap;
+    UInt8 msiCap = 0;
+    UInt8 msixCap = 0;
     IOPCIDevice* device = OSDynamicCast(IOPCIDevice, provider);
     if (!device)
         return NULL;
     if (ItlMt76::mt76_match(device)) {
         isMatch = true;
+        if (fHalService) {   /* probe may run repeatedly; don't leak or double-own */
+            fHalService->release();
+            fHalService = NULL;
+        }
         fHalService = new MtkMt76Hal;
     }
     if (isMatch) {
         XYLog("%s Found\n", __FUNCTION__);
-        device->findPCICapability(PCI_CAP_ID_MSIX, &msixCap);
-        if (msixCap)
+        /* Guard the capability offsets: findPCICapability can fail without
+         * writing the out param, and an uninitialized offset fed to
+         * pciMsiXClearAndSet writes random config registers (upstream 3526eb7). */
+        bool hasMsix = device->findPCICapability(PCI_CAP_ID_MSIX, &msixCap) && msixCap != 0;
+        if (hasMsix)
             pciMsiXClearAndSet(device, msixCap, PCI_MSIX_FLAGS_ENABLE, 0);
-        device->findPCICapability(PCI_CAP_ID_MSI, &msiCap);
+        bool hasMsi = device->findPCICapability(PCI_CAP_ID_MSI, &msiCap) && msiCap != 0;
         /*
          * Do not set the MSI enable bit by hand: nothing has programmed the
          * MSI address/data yet, and with MSI enabled the device stops raising
          * INTx. IOPCIFamily enables MSI when the PCIMessaged vector is
          * registered (see pci_intr_establish).
          */
-        if (!msiCap && !msixCap) {
+        if (!hasMsi && !hasMsix) {
             XYLog("%s No MSI cap\n", __FUNCTION__);
             fHalService->release();
             fHalService = NULL;

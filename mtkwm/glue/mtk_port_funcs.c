@@ -610,6 +610,9 @@ int mt792x_dma_enable(struct mt792x_dev *dev)
              MT_WFDMA0_GLO_CFG_OMIT_RX_INFO_PFET2);
 
     /* fire up the TX/RX DMA engines */
+    /* mwx_dma_enable barrier: make every ring/queue write above visible
+     * to the WPDMA before the engines start consuming descriptors. */
+    __sync_synchronize();
     mt76_set(dev, MT_WFDMA0_GLO_CFG,
              MT_WFDMA0_GLO_CFG_TX_DMA_EN | MT_WFDMA0_GLO_CFG_RX_DMA_EN);
 
@@ -717,6 +720,21 @@ int mt792x_wfsys_reset(struct mt792x_dev *dev)
     }
     XYLog("mtk-dbg: wfsys_reset done (reg 0x%x = 0x%x)\n",
           addr, mt76_rr(dev, addr));
+
+    /* The reset can clear the interrupt enable chain (and the MSI
+     * capability's enable bit).  Re-arm everything the DMA-enable path
+     * programs and ack stale status (upstream mwx_pci_irq_state: restoring
+     * the MSI bit alone is not enough -- INT_STA must be acked and
+     * HOST_INT_ENA / PCIE_MAC_INT_ENABLE rewritten).  Harmless before
+     * dma_enable runs: dma_enable programs the same registers again. */
+    mt76_wr(dev, MT_WFDMA0_HOST_INT_STA, 0xffffffff);
+    if (dev->irq_map)
+        mt76_wr(dev, dev->irq_map->host_irq_enable, dev->mt76.mmio.irqmask);
+    else
+        mt76_wr(dev, MT_WFDMA0_HOST_INT_ENA, dev->mt76.mmio.irqmask);
+    mt76_set(dev, MT_MCU2HOST_SW_INT_ENA, MT_MCU_CMD_WAKE_RX_PCIE);
+    mt76_wr(dev, MT_PCIE_MAC_INT_ENABLE, 0xff);
+    mtk_xnu_msi_rearm();
     return 0;
 }
 
@@ -982,14 +1000,24 @@ void mtk_dbg_mcu_regs(void *mdev, const char *tag)
     sta = mt76_rr(dev, MT_WFDMA0_HOST_INT_STA);
     {
         struct mt76_queue *rxq = &dev->mt76.q_rx[MT_RXQ_MCU];
+        struct mt76_queue *txq = dev->mt76.q_mcu[MT_MCUQ_WM];
+        struct mt76_queue *fdq = dev->mt76.q_mcu[MT_MCUQ_FWDL];
         /* NOTE: ring registers must be read directly through q->regs
          * (readl), NOT via mt76_rr() which remaps the value as a register
          * offset and yields garbage. */
         u32 rc = rxq->regs ? readl(&rxq->regs->cpu_idx) : 0;
         u32 rd = rxq->regs ? readl(&rxq->regs->dma_idx) : 0;
+        u32 rb = rxq->regs ? readl(&rxq->regs->desc_base) : 0;
+        u32 tc = txq && txq->regs ? readl(&txq->regs->cpu_idx) : 0;
+        u32 td = txq && txq->regs ? readl(&txq->regs->dma_idx) : 0;
+        u32 fc = fdq && fdq->regs ? readl(&fdq->regs->cpu_idx) : 0;
+        u32 fd_ = fdq && fdq->regs ? readl(&fdq->regs->dma_idx) : 0;
         XYLog("mtk-dbg-regs[%s]: GLO=%08x HOST_INT_ENA=%08x HOST_INT_STA=%08x "
-              "mcu_rxq cpu=%u dma=%u queued=%d\n",
-              tag, glc, hie, sta, rc, rd, rxq->queued);
+              "mcu_rxq cpu=%u dma=%u queued=%d desc=%08x/%08x "
+              "tx_mcuq cpu=%u dma=%u  fwdlq cpu=%u dma=%u\n",
+              tag, glc, hie, sta, rc, rd, rxq->queued,
+              rb, (u32)rxq->desc_dma,
+              tc, td, fc, fd_);
     }
 }
 
@@ -1045,41 +1073,52 @@ void mt792x_irq_tasklet(unsigned long data)
 {
     struct mt792x_dev *dev = (struct mt792x_dev *)data;
     const struct mt792x_irq_map *irq_map = dev->irq_map;
-    u32 intr, mask = 0;
+    int pass;
 
-    mt76_wr(dev, irq_map->host_irq_enable, 0);
+    /* MSI is edge-triggered: events that arrive while host_irq_enable is
+     * cleared raise no new message, so a single pass can strand work until
+     * the next (forced) interrupt.  Drain up to 8 passes per invocation
+     * (upstream 3176c02 mwx_intr drain loop). */
+    for (pass = 0; pass < 8; pass++) {
+        u32 intr, mask = 0;
 
-    intr = mt76_rr(dev, MT_WFDMA0_HOST_INT_STA);
-    intr &= dev->mt76.mmio.irqmask;
-    mt76_wr(dev, MT_WFDMA0_HOST_INT_STA, intr);
+        mt76_wr(dev, irq_map->host_irq_enable, 0);
 
-    mask |= intr & irq_map->rx.all_complete_mask;
-    if (intr & dev->irq_map->tx.mcu_complete_mask)
-        mask |= dev->irq_map->tx.mcu_complete_mask;
+        intr = mt76_rr(dev, MT_WFDMA0_HOST_INT_STA);
+        intr &= dev->mt76.mmio.irqmask;
+        mt76_wr(dev, MT_WFDMA0_HOST_INT_STA, intr);
 
-    if (intr & MT_INT_MCU_CMD) {
-        u32 intr_sw = mt76_rr(dev, MT_MCU_CMD);
+        mask |= intr & irq_map->rx.all_complete_mask;
+        if (intr & dev->irq_map->tx.mcu_complete_mask)
+            mask |= dev->irq_map->tx.mcu_complete_mask;
 
-        mt76_wr(dev, MT_MCU_CMD, intr_sw);
-        if (intr_sw & MT_MCU_CMD_WAKE_RX_PCIE) {
-            mask |= irq_map->rx.data_complete_mask;
-            intr |= irq_map->rx.data_complete_mask;
+        if (intr & MT_INT_MCU_CMD) {
+            u32 intr_sw = mt76_rr(dev, MT_MCU_CMD);
+
+            mt76_wr(dev, MT_MCU_CMD, intr_sw);
+            if (intr_sw & MT_MCU_CMD_WAKE_RX_PCIE) {
+                mask |= irq_map->rx.data_complete_mask;
+                intr |= irq_map->rx.data_complete_mask;
+            }
         }
+
+        mt76_set_irq_mask(&dev->mt76, irq_map->host_irq_enable, mask, 0);
+
+        if (intr & dev->irq_map->tx.all_complete_mask)
+            napi_schedule(&dev->mt76.tx_napi);
+
+        if (intr & irq_map->rx.wm_complete_mask)
+            napi_schedule(&dev->mt76.napi[MT_RXQ_MCU]);
+
+        if (intr & irq_map->rx.wm2_complete_mask)
+            napi_schedule(&dev->mt76.napi[MT_RXQ_MCU_WA]);
+
+        if (intr & irq_map->rx.data_complete_mask)
+            napi_schedule(&dev->mt76.napi[MT_RXQ_MAIN]);
+
+        if (!intr)
+            break;
     }
-
-    mt76_set_irq_mask(&dev->mt76, irq_map->host_irq_enable, mask, 0);
-
-    if (intr & dev->irq_map->tx.all_complete_mask)
-        napi_schedule(&dev->mt76.tx_napi);
-
-    if (intr & irq_map->rx.wm_complete_mask)
-        napi_schedule(&dev->mt76.napi[MT_RXQ_MCU]);
-
-    if (intr & irq_map->rx.wm2_complete_mask)
-        napi_schedule(&dev->mt76.napi[MT_RXQ_MCU_WA]);
-
-    if (intr & irq_map->rx.data_complete_mask)
-        napi_schedule(&dev->mt76.napi[MT_RXQ_MAIN]);
 }
 
 void mt792x_rx_poll_complete(struct mt76_dev *mdev, enum mt76_rxq_id q)
@@ -1153,13 +1192,16 @@ void mt76_set_stream_caps(struct mt76_phy *phy, bool vht)
 
 void mt76_pci_disable_aspm(struct pci_dev *pdev)
 {
-    (void)pdev;              /* TODO(M2): ASPM control via config space */
+    (void)pdev;
+    /* Real work lives in the XNU HAL: ItlMt76.cpp keeps the IOPCIDevice
+     * (config space access) and the AMD-parent/boot-arg policy. */
+    mtk_xnu_disable_aspm();
 }
 
 bool mt76_pci_aspm_supported(struct pci_dev *pdev)
 {
     (void)pdev;
-    return false;
+    return mtk_xnu_aspm_supported();
 }
 
 int mt7921_mac_sta_add(struct mt76_dev *mdev, struct ieee80211_vif *vif,

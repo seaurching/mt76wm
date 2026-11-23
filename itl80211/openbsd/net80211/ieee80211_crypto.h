@@ -164,6 +164,11 @@ struct ieee80211_key {
 #define IEEE80211_KEY_TX	0x00000002	/* Tx+Rx */
 #define IEEE80211_KEY_IGTK	0x00000004	/* integrity group key */
 #define IEEE80211_KEY_SWCRYPTO	0x00000080	/* loaded for software crypto */
+/* mt76wm glue: installed in the firmware WTBL (hardware crypto in use).
+ * A key may carry both this and SWCRYPTO: the hardware does the work and
+ * the software context is the RX fallback (MT7921 group-addressed frames
+ * sometimes arrive undecrypted -- see mtk_set_key). */
+#define IEEE80211_KEY_HWCRYPTO	0x00000100
 
 	u_int			k_len;
 	u_int64_t		k_rsc[IEEE80211_NUM_TID];
