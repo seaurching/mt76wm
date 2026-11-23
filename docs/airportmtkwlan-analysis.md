@@ -172,3 +172,122 @@ mwx start 同样 `setBusMasterEnable/setIOEnable(true)/setMemoryEnable(true)`
 - [ ] D7 RX WPDMA 头偏移与 `MT7921_MCU_RXD_SIZE` 复查
 - [ ] 真机验证 build 57：`SEMGET/RELEASE` 出现 `SEMRET ret=2/3`、
       固件 patch+RAM 四连条、对照 AirportMtkWlan 的 en2 行为
+
+---
+
+## 2026-11-13 更新：v2.2.x 连接链路 / 吞吐修复 / AWDL 边界
+
+**真机验证（用户实测，2026-11-19 补）**：该驱动在**同一台本机**（MT7921
+pci14c3:7961）上可正常加载、扫描 Wi-Fi、连接手机热点（WPA2-Personal）；
+**WPA2-Enterprise 无法连接**（参考驱动自身的边界）。固件/MCU/sem/WPDMA 链路
+在本机被完整证明可用——mt76wm 的 sem 零应答是自家移植层问题，非平台限制。
+仓库演进很快
+（v2.0.0 → v2.2.x，132 文件 +108k 行）；本节分析基于干净 worktree
+`/Users/miyamoto/Documents/AirportMtkWlan-latest`（origin/HEAD `3526eb7`）。
+原克隆里的本地未提交改动（9 文件 +220 行：WCL/MtkMwx/net80211 等）**未触碰**，
+系用户自己的实验代码，合并上游前请自行处置。
+
+### 5.1 连上手机热点的三个关键（mt76wm 直接对照项）
+
+分工：WCL（Wireless Control Layer，`AirportMtkWlan/WCL/WCL.cpp`）接收 macOS
+命令并把参数灌进 net80211 `ic_des_*` → net80211 状态机跑 scan→join→PAE 四次握手
+→ `MtkMwx` HAL 只做固件编程（信道/STA_REC/密钥）。
+
+1. **WPA2/WPA3 过渡模式 AKM 改写**（`WCL.hpp:385-450` `selectWPA2TransitionMode`，
+   scan 发布 `WCL.cpp:366-407` 与 join `WCL.cpp:485-663` 各跑一次）：手机热点几乎
+   都是 PSK+SAE 混合——对**发给 macOS 的 RSN IE 副本**把 SAE 套件改写为 PSK 单套件
+   + 清 MFPC/MFPR（真握手仍用原始 RSN）。不做这步连密码框都不出。FT AKM 映射回
+   WPA2（`WCL.hpp:555-593`，注释明言固件/PAE 无 FT）。
+2. **GTK 组播软件解密兜底**（`MtkMwx.cpp:1977-2015` `mwx_set_key`）：注释直言
+   MT7921 硬件 GTK 解密组播**不可靠**——不置软件 CCMP 则组播帧被 wepfail 丢弃，
+   **广播 ARP/DHCP 永远到不了协议栈**（"握手成功但拿不到 DHCP"的权威答案）。
+3. **PSK 四次握手全在 net80211 PAE**（`ieee80211_pae_input.c`）：WCL 的
+   installWCLKey 只管企业级 PMK（`WCL.cpp:425-452` 注释明确拒绝 PTK/GTK）。
+   mt76wm 若不走 net80211 PAE 需自备握手。
+
+### 5.2 吞吐修复根因（commit 级，"能连"→"可用吞吐"的分水岭）
+
+| commit | 根因/修复 | mt76wm 启示 |
+|---|---|---|
+| 3176c02 | 1x1 能力注册（streams=0）；MSI 边沿搁浅（ISR 退出前 INT_ENA 读回确认 + 1ms 兜底）；活跃流量时 bgscan 拒绝（≥200pps 重放缓存不拉离信道）；**WMM/EDCA 不编程 → 基本速率重传**；BA reorder 风暴 250ms 限速 | 能力位别漏；QoS 必编 |
+| e4a304a | **ASPM/L1SS 显式关**（Ryzen 上不关 ~40Mbps 封顶）；workloop 饿死 → 异步 pull + ISR max_passes=2 让出 gate；TX doorbell 每 16 帧批写；A-MSDU 被邻居帧误 flush | 中断/输出共享 workloop 必须有界 |
+| 485d6a8 | RX BA 协商漏 amsdu=1；多段 A-MSDU 单缓冲丢链式段；RX drain 预算 64×2→128×4；MSI 搁浅二次修复（余量自触发） | 聚合参数逐项核对 |
+| 9bb12ae | DMA 弹性缓冲须**物理连续+cacheable+32 位**；mbuf 段长须 setlen 否则空 head 拒收；**TX WTBL_BA 必须在 STA BA 之前编程**（WTBL_BA tag 0x08）；A-MSDU 定时 flush（2ms） | 与我们 IOVA+IODMACommand 路线不同（见下），BA 顺序可抄 |
+| eee2ac7 | ASPM 按 PCIe 5.4.1.3 先下游后上游，**AMD 父桥绝对不碰**（动根口寄存器一有流量整条 PCIe 死锁）；热重启无 PERST 卡 lpctl=0x4 → `mwx_ensure_drv_own` 已持有时早退、**绝不先 fw_pmctrl**（自杀操作）、轮询 50→500ms | own 抢占时序直接对照 sem 卡点 |
+
+**DMA 路线差异注意**：该驱动要求 OpenCore `DisableIoMapper=true`（直编程物理
+DMA 环，不兼容 AppleVTD remap）；mt76wm 走真 IOVA（IODMACommand）——各自成立，
+但排障时注意语境不同。其 BA 窗口 256 + A-MSDU 重组（11c1bdb/570f6f9）是吞吐必需，
+SAE/FT/160MHz 可后置（160 仅 MT7922，MT7921 限 80MHz，bbff0d1）。
+
+### 5.3 MSI/probe 修复（`3526eb7`，最新一条）
+
+`IOPCIEDeviceWrapper.cpp` probe()：`msiCap/msixCap` **未初始化**且不检查
+`findPCICapability` 返回值就当能力偏移用 → MSI-X clear-and-set 写到随机配置寄存器。
+修复 = 零初始化 + 返回值/非零偏移双重校验。与 D1/D3 同类教训：**能力偏移必须
+探测验证后再用**。
+
+### 5.4 AWDL/AirDrop 边界（对 [airdrop-research.md](airdrop-research.md) 的更新）
+
+v2.2.x 的 "high-throughput AWDL/AirDrop" **是链路层，不是 AirDrop 应用层**，
+旧结论基本不变：
+
+- **AWDL 状态机仍无**：sync/election/presence/availability-window/信道序列全部
+  缺失（`AirportItlwmV2.hpp:289-306` 状态字段全是死声明）；AWDL ioctl 对
+  wifip2pd 全 `unsupported`；**remain-on-channel 没有**。
+- **awdl0 = 接收影子接口**：RX 分流可抄（`_if_input`：dest==awdl MAC 或
+  EtherType 0x88F0 → awdl0；IPv6 `33:33:*` 组播克隆到 en0+awdl0，`_mbuf.cpp:44-118`）；
+  但 TX 混进 infra 队列且需 S_RUN，对端不可达。
+- "high-throughput" 实为链路层优化（650b6ec）：BA 序列窗改 modulo-4096 标准
+  滑窗、非关联 peer 接受 ADDBA、Apple SNAP `00:17:F2` 解封装。
+- **router coexistence 只是连接管理级**（awdl 开着不漫游 `WCL.cpp:249`；
+  `mwx_send_null_pm` 是**未接线死代码**）——没有射频分时，正是 Linux 侧缺的
+  "驱动原生 AWDL"，本仓库同样没给出。
+- **Instant Hotspot**（6223ab4）= 关联请求注入 Apple Device/Instant Hotspot
+  vendor IE + 蓝牙配套（AirportMtkBt），与 AWDL 数据面无关。
+- **定位**：这是路线 B（注册 awdl0 走系统栈）的**接口级先例**，但未端到端跑通；
+  要真 AirDrop 仍需实现 wifip2pd 下发的 AWDL ioctl + 信道调度，或走路线 A。
+- 可抄清单：createVirtualInterface role 分支 + 本地管理 MAC `^0x02` +
+  `deferBSDAttach`/`registerService` 时序 + 能力位（byte0 bit0 / byte4 bit0 /
+  byte9 bit0-1）+ 上述 RX 分流 + BA/SNAP。
+
+### 5.5 部署要求修正（AirportMtkwm 变体重要）
+
+**不需要 OCLP root patch / IO80211FamilyLegacy 降级**，也**不做 Broadcom 伪装**
+（保持原生 0x14c3，禁用一切伪装 SSDT）；要求 MinKernel/MaxKernel 与系统匹配
+（Sequoia 24.2-24.99 / Tahoe 25.0-25.99，vtable ABI 分离，用错构建直接崩）；
+`AirportMtkWlan.kext` 与 `SimpleMtkWlan.kext` 不可同载。此前 Hi-Jiajun 仓库的
+"OCLP + spoof IOName"路线不是唯一路径——**原生 IO80211 + Skywalk（macOS ≥15.2）
+可行**。
+
+### 5.6 诊断工具三件套（整体值得抄）
+
+1. **IORegistry 持久日志环**（`MtkDebugLog` 属性 + `tools/mtklog.sh`，免 root）——
+   绕过内核日志收集限制。
+2. **脱敏一键归档**（`tools/mtk-grab-logs.sh`，1000 行 9 段式，用户名/序列号/
+   MAC/口令全脱敏，可 CI 化）。
+3. **吞吐计数器**（`MTK_PERF=1` 构建 + `tools/airport_throughput.py` 读
+   `MtkThroughput`：rx/tx 描述符、A-MSDU 链路、WTBL_BA 成败、分阶段 ticks
+   直方图 + iperf3 前后对比）——**先建计数器再调吞吐**。
+
+### 5.7 TODO 追加（连热点优先级，据 5.1/5.2 重排）
+
+> 2026-11-13 已把下列前 5 项合并进代码（`mtkwm-airport` 构建通过）；剩余见未勾选。
+
+- [x] sem 卡点收尾：`mt7921e_driver_own` / `__mt792xe_mcu_drv_pmctrl` 加
+      "已持有早退"，drv_pmctrl 轮询 50→500ms（eee2ac7；绝不先 fw_pmctrl 已确认）
+- [x] GTK 组播软件解密兜底：`mtk_set_key` 总是先建软件上下文（新增
+      `IEEE80211_KEY_HWCRYPTO` 区分硬件装钥；TX 优先硬件，RX 软件兜底）
+- [x] AKM 过渡模式改写：WCL 侧已有 `selectWPA2TransitionMode`（publishWCLBeacon/
+      startWCLJoin 已接线）；补 itl80211 `ieee80211_choose_rsnparams` PSK 优先
+      （原 SAE-first 会在混合热点上选 Dragonfly 失败）
+- [x] MSI/中断：ISR tasklet 加 8-pass drain 循环（MSI 边沿不重发）；
+      `wfsys_reset` 后重臂（ack INT_STA + 重写 INT_ENA/PCIE_MAC_INT_ENABLE +
+      `mtk_xnu_msi_rearm` MSI config 快照恢复）；probe 能力偏移守卫（3526eb7）；
+      `-nvoff` 探测解耦（3907c5c）
+- [x] ASPM/L1SS 关闭：`mtk_xnu_disable_aspm`（端点+上游桥、PCIe 5.4.1.3 顺序、
+      AMD 父桥禁区、`-mtkallowaspm/-mtknoparentaspm/-mtkforceparentaspm`），
+      `mt7921_disable_aspm` 默认 true
+- [ ] MSI 读回确认 + 1ms 兜底定时（3176c02 ISR 顶层两项，drain 循环之外）
+- [ ] EDCA/WMM 编程 + BA 窗 256 + A-MSDU + WTBL_BA 顺序（吞吐阶段）
+- [ ] 诊断三件套（5.6；IORegistry 日志环已有，余两件未搬）

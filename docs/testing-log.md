@@ -232,3 +232,31 @@ MT7921 PCIe 无关）；核心 792 文件两边齐全。mt792x_dma.c 在 mt76wm 
 - 后续梯队：D3 换普通 `IOInterruptEventSource`（MSI edge-triggered 无需 filter）、
   D4 MSI edge drain 循环、D5 PCIe FLR 恢复链（warm reboot 残留）、D6 固件
   4KB 分块、D7 RX WPDMA 头偏移复查。
+
+## 9. AirportMtk-macOS 对照分析（2026-11-13）
+
+克隆 `github.com/Hi-Jiajun/AirportMtk-macOS`（mwx 血统另一实现：AirportItlwm
+前端 + laobamac/SimpleMtkWlan if_mwx 驱动体；macOS 15.8.1 + MT7922 实测固件/
+关联/扫描全通），增量对照详见
+[airportmtk-macos-analysis.md](airportmtk-macos-analysis.md)（E 系列）。要点：
+
+- **E1 同 workloop ISR 阻塞**（sem 零应答新判别项）：中断源与发命令链同挂一条
+  IOWorkLoop → 等待期应答堆环、**超时后批量到达**；解法 = command gate 门控
+  自排空 MCU RX 环（`MtkMwx.cpp:8965-9120`）。判别签名：`SEMSEND ret=-60` 后
+  是否有迟到应答涌入。
+- **E2** DRV_OWN 前必须**先读一次** `MT_TOP_LPCR_HOST_BAND0`（否则中断不工作，
+  症状同 sem 零应答）；**E3** WFSYS reset 清 MSI capability，恢复需
+  ack `HOST_INT_STA` + 重写 `HOST_INT_ENA`/`PCIE_MAC_INT_ENABLE`；
+  **E4** 固件-驱动版本耦合（2024 驱动+2026 固件 → own failed，建议 blob A/B）。
+- 扫描：MCU hw scan（`MCU_CE_CMD_START_HW_SCAN`，与 mt76
+  `mt76_connac_mcu_hw_scan` 同族协议）参数已验证可抄（120 ms 驻留、seq 看门狗、
+  只 cancel 不 reset）。**数据面**：结果 = 普通 beacon/probe resp 走 RX 数据环，
+  固件只发 scan-done 终止事件（MT7921 = `MCU_EVENT_SCAN_DONE` legacy eid）；
+  MT7921 的 **connac2 命令后端尚未写**（构建器/事件分发在树中未接线，详见
+  主文档 §3）。防 `MWX_FLAG_SCANNING` 泄漏、ioctl 路径禁分配（round90 panic）。
+- **kernel_task 上报断链**（round73-75）：SCAN_RESULT 读取方是 kernel_task 而非
+  airportd、结果不转发现代缓存 → 系统 Wi-Fi 列表空。已证伪清单 + 接口侧路径
+  候选方向已归档——**AirportMtkwm 变体的前置必读**。
+- AWDL 发布配方：createVirtualInterface role-6 覆写 + **attach 后必须
+  registerService** + 按 role 单飞；ROC 缺失 → AirDrop 数据面未做
+  （呼应 [airdrop-research.md](airdrop-research.md) 路线 B 硬边界）。
