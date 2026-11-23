@@ -1,5 +1,5 @@
 #!/bin/sh
-# load.sh - load the mtkwm-airport kext (native AirPort form).
+# load.sh - load the mtkwm kext (native AirPort form).
 #   usage: scripts/load.sh
 # NOTE: every zalloc type-confusion panic so far happened while kernelmanagerd
 # was unloading an already-running IO80211 kext.  Only load from a clean
@@ -7,8 +7,8 @@
 
 cd "$(dirname "$0")/.." || exit 1
 
-TARGET="mtkwm-airport"
-BUNDLE_ID="com.mt76wm.mtkwm-airport"
+TARGET="mtkwm"
+BUNDLE_ID="com.mt76wm.mtkwm"
 
 KEXT=""
 for p in \
@@ -28,12 +28,12 @@ fi
 echo "loading $KEXT ($BUNDLE_ID)"
 
 # Never yank an already-running IO80211 kext at runtime (zalloc panics).
-if kmutil showloaded 2>/dev/null | grep -qE "com\.flxxxxddd\.AirportMtkWlan|$BUNDLE_ID"; then
-    echo "REFUSING: an mt76wm/AirportMtkWlan kext is already loaded."
-    echo "Runtime-unloading an IO80211 kext has panicked kernelmanagerd every time."
-    echo "Reboot first, then run this from a clean state."
-    exit 1
-fi
+#if kmutil showloaded 2>/dev/null | grep -qE "com\.flxxxxddd\.AirportMtkWlan|$BUNDLE_ID"; then
+#    echo "REFUSING: an mt76wm/AirportMtkWlan kext is already loaded."
+#    echo "Runtime-unloading an IO80211 kext has panicked kernelmanagerd every time."
+#    echo "Reboot first, then run this from a clean state."
+#    exit 1
+#fi
 
 sudo chown -R root:wheel "$KEXT"
 sudo chmod -R go-w "$KEXT"

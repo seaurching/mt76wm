@@ -45,7 +45,7 @@ settings:
       - "$(OTHER_CFLAGS)"
 
 targets:
-  mtkwm-airport:   # native AirPort/Skywalk form (the only target)
+  mtkwm:   # native AirPort/Skywalk form (the only target)
     type: bundle   # patched to kernel-extension by scripts/gen_project.sh
     platform: macOS
     sources:
@@ -84,17 +84,17 @@ targets:
           - "$(PROJECT_DIR)/itl80211/linux"
           - "$(PROJECT_DIR)/MacKernelSDK/Library/x86_64"
         SYSTEM_HEADER_SEARCH_PATHS: "itl80211/openbsd itl80211 mtkwm/glue/linuxcompat include include/Airport AirportMtkwm"
-        MODULE_NAME: com.mt76wm.mtkwm-airport
-        PRODUCT_BUNDLE_IDENTIFIER: com.mt76wm.mtkwm-airport
+        MODULE_NAME: com.mt76wm.mtkwm
+        PRODUCT_BUNDLE_IDENTIFIER: com.mt76wm.mtkwm
         PRODUCT_NAME: "$(TARGET_NAME)"
         WRAPPER_EXTENSION: kext
     dependencies:
       - framework: MacKernelSDK/Library/x86_64/libkmod.a
 
 schemes:
-  mtkwm-airport:
+  mtkwm:
     build:
       targets:
-        mtkwm-airport: all
+        mtkwm: all
     run:
       config: Debug
