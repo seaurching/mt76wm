@@ -29,6 +29,30 @@ void mtk_pci_deinit(struct mt76_softc *sc);
 void mtk_xnu_disable_aspm(void);
 bool mtk_xnu_aspm_supported(void);
 
+/* True when the data TX ring has drained (all TXS reaped).  Used by the
+ * net80211 watchdog to drop its per-send TX countdown without a false
+ * "device not completing frames" alarm. */
+bool mtk_txq_drained(void *mdev);
+
+/* MAC RX filter mode: scanning=true opens the filter for other-BSS
+ * beacons/probe responses (scan hears everything); scanning=false
+ * re-enables the associated-mode beacon filter. */
+void mtk_rxfilter_set(void *mdev);
+
+/* MCU hardware scan (mt76_connac START/CANCEL_HW_SCAN port). */
+struct mtk_hw_scan_params {
+    int      active;           /* send probe requests (scan_type=1) */
+    int      restricted;       /* honor the channel bitmap */
+    uint8_t  ssid_len;
+    uint8_t  ssid[32];
+    uint8_t  channels[32];     /* per-channel bitmap when restricted */
+};
+int  mtk_hw_scan_active(void *mdev);
+int  mtk_hw_scan_start(void *mdev, const struct mtk_hw_scan_params *p);
+int  mtk_hw_scan_cancel(void *mdev);
+void mtk_scan_abort(void);           /* net80211 side: cancel by g_n.mdev */
+void mtk_scan_done_notify(void);   /* glue -> net80211 completion */
+
 /* MSI address/data snapshot + restore (ItlMt76.cpp).  Call once after the
  * PCIMessaged vector is registered to snapshot; a later call after WFSYS
  * reset restores the capability if the reset cleared it (upstream

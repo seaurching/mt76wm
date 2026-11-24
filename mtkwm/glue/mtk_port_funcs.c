@@ -16,6 +16,7 @@
 #include "../mt76core/mt76.h"
 #include "../mt76core/dma.h"
 #include "../mt76core/mt792x.h"
+#include "../mt76core/mt76_connac_mcu.h"
 #include "../mt7921/mt7921.h"
 
 #include "mtk_api.h"
@@ -260,14 +261,54 @@ mt76_init_queue(struct mt76_dev *dev, int qid, int idx, int n_desc,
 /* ================================================================== */
 /* RX path (mt76/mac80211.c) -> net80211 (glue/mtk_net80211.c)         */
 /* ================================================================== */
-void mt76_rx(struct mt76_dev *dev, enum mt76_rxq_id q, struct sk_buff *skb)
+/*
+ * RX delivery chain -- faithful port of Linux mt76/mac80211.c:
+ *
+ *   mt76_rx()                  per-frame entry (from mt7921_queue_rx_skb)
+ *     -> mt76_rx_release_burst()   A-MSDU subframe aggregation
+ *   mt76_rx_poll_complete()    end of each poll round
+ *     -> drain dev->rx_skb[q] -> mt76_check_sta() -> mt76_rx_aggr_reorder()
+ *   mt76_rx_complete()         CCMP PN check, frag_list split, deliver
+ *     -> mtk_rx_deliver()      the only platform adapter (Linux ends at
+ *                              ieee80211_rx_list(); we end at net80211)
+ */
+/* TEMP(diag, scan-debug round): delivery-chain census. */
+static struct { uint64_t rx, notrun, queued, drained, delivered, locked; }
+    mtk_chain_cnt;
+
+static void mtk_chain_dump(const char *tag)
+{
+    static uint64_t shown[6];
+    uint64_t *cur = &mtk_chain_cnt.rx;
+    int i;
+
+    for (i = 0; i < 6; i++)
+        if (cur[i] != shown[i])
+            break;
+    if (i == 6)
+        return;
+    for (i = 0; i < 6; i++)
+        shown[i] = cur[i];
+    XYLog("mtk-dbg-chain[%s]: rx=%llu notrun=%llu queued=%llu drained=%llu "
+          "delivered=%llu x=%llu\n",
+          tag,
+          (unsigned long long)mtk_chain_cnt.rx,
+          (unsigned long long)mtk_chain_cnt.notrun,
+          (unsigned long long)mtk_chain_cnt.queued,
+          (unsigned long long)mtk_chain_cnt.drained,
+          (unsigned long long)mtk_chain_cnt.delivered,
+          (unsigned long long)mtk_chain_cnt.locked);
+}
+
+static void mtk_rx_deliver(struct mt76_dev *dev, struct sk_buff *skb)
 {
     struct mt76_rx_status *status = (struct mt76_rx_status *)skb->cb;
     struct mt792x_dev *mdev = container_of(dev, struct mt792x_dev, mt76);
     struct mtk_rx_meta meta;
     int dbm;
 
-    (void)q;
+    mtk_chain_cnt.delivered++;
+
     memset(&meta, 0, sizeof(meta));
     meta.freq = status->freq;
     meta.timestamp = status->timestamp;
@@ -308,23 +349,255 @@ void mt76_rx(struct mt76_dev *dev, enum mt76_rxq_id q, struct sk_buff *skb)
     dev_kfree_skb(skb);
 }
 
+/* Port of Linux mt76_check_ccmp_pn(): per-recipient replay detection
+ * (IEEE 802.11-2020 12.5.3.4.4).  A failed replay is demoted to
+ * monitor-only exactly like Linux. */
+static void
+mt76_check_ccmp_pn(struct sk_buff *skb)
+{
+    struct mt76_rx_status *status = (struct mt76_rx_status *)skb->cb;
+    struct mt76_wcid *wcid = status->wcid;
+    struct ieee80211_hdr *hdr;
+    int security_idx;
+    int ret;
+
+    if (!(status->flag & RX_FLAG_DECRYPTED))
+        return;
+
+    if (status->flag & RX_FLAG_ONLY_MONITOR)
+        return;
+
+    if (!wcid || !wcid->rx_check_pn)
+        return;
+
+    security_idx = status->qos_ctl & IEEE80211_QOS_CTL_TID_MASK;
+    if (status->flag & RX_FLAG_8023)
+        goto skip_hdr_check;
+
+    hdr = (struct ieee80211_hdr *)mt76_skb_get_hdr(skb);
+    if (!(status->flag & RX_FLAG_IV_STRIPPED)) {
+        if (ieee80211_is_frag(hdr) &&
+            !ieee80211_is_first_frag(hdr->seq_ctrl))
+            return;
+    }
+
+    /* IEEE 802.11-2020, 12.5.3.4.4 c): a single replay counter for
+     * individually addressed robust Management frames (To DS == 0). */
+    if (ieee80211_is_mgmt(hdr->frame_control) &&
+        !ieee80211_has_tods(hdr->frame_control))
+        security_idx = IEEE80211_NUM_TIDS;
+
+skip_hdr_check:
+    BUILD_BUG_ON(sizeof(status->iv) != sizeof(wcid->rx_key_pn[0]));
+    ret = memcmp(status->iv, wcid->rx_key_pn[security_idx],
+                 sizeof(status->iv));
+    if (ret <= 0) {
+        status->flag |= RX_FLAG_ONLY_MONITOR;
+        return;
+    }
+
+    memcpy(wcid->rx_key_pn[security_idx], status->iv, sizeof(status->iv));
+
+    if (status->flag & RX_FLAG_IV_STRIPPED)
+        status->flag |= RX_FLAG_PN_VALIDATED;
+}
+
+/* Port of Linux mt76_check_sta(): pspoll source resolution, RSSI/poll
+ * bookkeeping and the STA power-save state machine.  mt76_airtime_check()
+ * is omitted deliberately: it is a no-op on MT7921 (drv_flags carries no
+ * MT_DRV_SW_RX_AIRTIME -- airtime is reported from WTBL polling in
+ * mt7921_mac_sta_poll instead). */
+static void
+mt76_check_sta(struct mt76_dev *dev, struct sk_buff *skb)
+{
+    struct mt76_rx_status *status = (struct mt76_rx_status *)skb->cb;
+    struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)mt76_skb_get_hdr(skb);
+    struct ieee80211_sta *sta;
+    struct mt76_wcid *wcid = status->wcid;
+    u8 tidno = status->qos_ctl & IEEE80211_QOS_CTL_TID_MASK;
+    int signal;
+    bool ps;
+
+    if (ieee80211_is_pspoll(hdr->frame_control) && !wcid &&
+        !(status->flag & RX_FLAG_8023)) {
+        sta = ieee80211_find_sta_by_ifaddr(dev->hw, hdr->addr2, NULL);
+        if (sta)
+            wcid = status->wcid = (struct mt76_wcid *)sta->drv_priv;
+    }
+
+    if (!wcid || !wcid->sta)
+        return;
+
+    sta = wcid_to_sta(wcid);
+
+    signal = mt76_rx_signal(status->chains, status->chain_signal);
+    if (signal <= 0 && signal > -128)
+        ewma_signal_add(&wcid->rssi, -signal);
+
+    wcid->inactive_count = 0;
+
+    if (status->flag & RX_FLAG_8023)
+        return;
+
+    if (!test_bit(MT_WCID_FLAG_CHECK_PS, &wcid->flags))
+        return;
+
+    if (ieee80211_is_pspoll(hdr->frame_control)) {
+        ieee80211_sta_pspoll(sta);
+        return;
+    }
+
+    if (ieee80211_has_morefrags(hdr->frame_control) ||
+        !(ieee80211_is_mgmt(hdr->frame_control) ||
+          ieee80211_is_data(hdr->frame_control)))
+        return;
+
+    ps = ieee80211_has_pm(hdr->frame_control);
+
+    if (ps && (ieee80211_is_data_qos(hdr->frame_control) ||
+               ieee80211_is_qos_nullfunc(hdr->frame_control)))
+        ieee80211_sta_uapsd_trigger(sta, tidno);
+
+    if (!!test_bit(MT_WCID_FLAG_PS, &wcid->flags) == ps)
+        return;
+
+    if (ps)
+        set_bit(MT_WCID_FLAG_PS, &wcid->flags);
+
+    if (dev->drv->sta_ps)
+        dev->drv->sta_ps(dev, sta, ps);
+
+    if (!ps)
+        clear_bit(MT_WCID_FLAG_PS, &wcid->flags);
+
+    ieee80211_sta_ps_transition(sta, ps);
+}
+
+static void
+mt76_rx_release_amsdu(struct mt76_phy *phy, enum mt76_rxq_id q)
+{
+    struct sk_buff *skb = phy->rx_amsdu[q].head;
+    struct mt76_rx_status *status = (struct mt76_rx_status *)skb->cb;
+    struct mt76_dev *dev = phy->dev;
+
+    phy->rx_amsdu[q].head = NULL;
+    phy->rx_amsdu[q].tail = NULL;
+
+    /*
+     * Validate if the amsdu has a proper first subframe (Linux): a
+     * single MSDU can be parsed as A-MSDU when the unauthenticated
+     * A-MSDU flag of the QoS header gets flipped; in such cases the
+     * first subframe has a LLC/SNAP header where the destination
+     * address should be.
+     */
+    if (skb_shinfo(skb)->frag_list) {
+        int offset = 0;
+
+        if (!(status->flag & RX_FLAG_8023)) {
+            offset = ieee80211_get_hdrlen_from_skb(skb);
+
+            if ((status->flag &
+                 (RX_FLAG_DECRYPTED | RX_FLAG_IV_STRIPPED)) ==
+                RX_FLAG_DECRYPTED)
+                offset += 8;
+        }
+
+        if (ether_addr_equal(skb->data + offset, rfc1042_header)) {
+            dev_kfree_skb(skb);
+            return;
+        }
+    }
+
+    __skb_queue_tail(&dev->rx_skb[q], skb);
+    mtk_chain_cnt.queued++;
+}
+
+static void
+mt76_rx_release_burst(struct mt76_phy *phy, enum mt76_rxq_id q,
+                      struct sk_buff *skb)
+{
+    struct mt76_rx_status *status = (struct mt76_rx_status *)skb->cb;
+
+    if (phy->rx_amsdu[q].head &&
+        (!status->amsdu || status->first_amsdu ||
+         status->seqno != phy->rx_amsdu[q].seqno))
+        mt76_rx_release_amsdu(phy, q);
+
+    if (!phy->rx_amsdu[q].head) {
+        phy->rx_amsdu[q].tail = &skb_shinfo(skb)->frag_list;
+        phy->rx_amsdu[q].seqno = status->seqno;
+        phy->rx_amsdu[q].head = skb;
+    } else {
+        *phy->rx_amsdu[q].tail = skb;
+        phy->rx_amsdu[q].tail = &skb->next;
+    }
+
+    if (!status->amsdu || status->last_amsdu)
+        mt76_rx_release_amsdu(phy, q);
+}
+
+void mt76_rx(struct mt76_dev *dev, enum mt76_rxq_id q, struct sk_buff *skb)
+{
+    struct mt76_phy *phy = &dev->phy;
+
+    mtk_chain_cnt.rx++;
+    if (!test_bit(MT76_STATE_RUNNING, &phy->state)) {
+        mtk_chain_cnt.notrun++;
+        dev_kfree_skb(skb);
+        return;
+    }
+
+    mt76_rx_release_burst(phy, q, skb);
+}
+
 void mt76_rx_complete(struct mt76_dev *dev, struct sk_buff_head *frames,
                       struct napi_struct *napi)
 {
     struct sk_buff *skb;
 
     (void)napi;
-    while ((skb = skb_dequeue(frames)) != NULL)
-        mt76_rx(dev, MT_RXQ_MAIN, skb);
+    /*
+     * XNU: deliver OUTSIDE any spinlock.  Linux holds rx_lock across
+     * delivery because its RX allocations are GFP_ATOMIC; on XNU the
+     * net80211 path allocates nodes/mbufs and may block, and blocking
+     * with preemption disabled panics ("thread_invoke:
+     * preemption_level 1").  Producer (mt76_rx) and consumer both run
+     * serialized on the tasklet thread, so no lock is needed here.
+     */
+    while ((skb = __skb_dequeue(frames)) != NULL) {
+        struct sk_buff *nskb = skb_shinfo(skb)->frag_list;
+
+        mt76_check_ccmp_pn(skb);
+        skb_shinfo(skb)->frag_list = NULL;
+
+        mtk_rx_deliver(dev, skb);
+
+        /* subsequent amsdu subframes: Linux delivers each separately */
+        while (nskb) {
+            skb = nskb;
+            nskb = skb->next;
+            skb->next = NULL;
+            mtk_rx_deliver(dev, skb);
+        }
+    }
     mtk_net80211_rx_flush(container_of(dev, struct mt792x_dev, mt76));
 }
 
 void mt76_rx_poll_complete(struct mt76_dev *dev, enum mt76_rxq_id q,
                            struct napi_struct *napi)
 {
+    struct sk_buff_head frames;
+    struct sk_buff *skb;
+
     (void)napi;
-    /* End of the RX batch: deliver what ieee80211_inputm() deferred. */
-    mtk_net80211_rx_flush(container_of(dev, struct mt792x_dev, mt76));
+    __skb_queue_head_init(&frames);
+    while ((skb = __skb_dequeue(&dev->rx_skb[q])) != NULL) {
+        mtk_chain_cnt.drained++;
+        mt76_check_sta(dev, skb);
+        mt76_rx_aggr_reorder(skb, &frames);
+    }
+    mtk_chain_dump("poll");
+    mt76_rx_complete(dev, &frames, napi);
     if (dev->drv->rx_poll_complete)
         dev->drv->rx_poll_complete(dev, q);
 }
@@ -891,6 +1164,8 @@ int __mt7921_start(struct mt792x_phy *phy)
         goto out;
 
     mt792x_mac_reset_counters(phy);
+    /* Standing RX filter (open): fixed here, once, at MCU-ready. */
+    mtk_rxfilter_set(dev);
     set_bit(MT76_STATE_RUNNING, &mphy->state);
     XYLog("mtk-dbg: MCU start sequence done, running\n");
 
@@ -918,9 +1193,177 @@ int mt7921_set_tx_sar_pwr(struct ieee80211_hw *hw,
     return 0;   /* TODO(M2) */
 }
 
+/* ================================================================== */
+/* MCU hardware scan                                                   */
+/* ================================================================== */
+/*
+ * mtkwm scans via the firmware scan engine -- the D-series reference
+ * recipe (AirportMtkWlan MtkMwx.cpp mt7921_mcu_hw_scan / mwx_scan):
+ * the firmware hops the channels itself and forwards beacons / probe
+ * responses as ordinary frames on the RX data ring; only a scan-done
+ * event marks the end.  The soft-scan path (per-hop
+ * MCU_EXT_CMD_CHANNEL_SWITCH + dwell timer) never hears other-BSS
+ * frames on this firmware: 1200+ probe_reqs went out with healthy TXS
+ * while zero beacons reached the RX bridge.
+ */
+#define MTK_HW_SCAN_DWELL_MS   120
+#define MTK_HW_SCAN_MAX_CHAN   64
+/* itl80211 constants (not visible in this translation unit). */
+#define MTK_NWID_LEN           32    /* IEEE80211_NWID_LEN */
+#define MTK_CHAN_MAX           255   /* IEEE80211_CHAN_MAX */
+
+static u8 mtk_scan_seq;
+
+int mtk_hw_scan_start(void *mdev, const struct mtk_hw_scan_params *p)
+{
+    struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
+    struct mt76_connac_hw_scan_req *req;
+    struct sk_buff *skb;
+    int n_ssids = 0, nchan = 0, i;
+
+    if (!dev || !p)
+        return -EINVAL;
+    if (test_bit(MT76_HW_SCANNING, &dev->mt76.phy.state))
+        return -EBUSY;
+
+    skb = mt76_mcu_msg_alloc(&dev->mt76, NULL, sizeof(*req));
+    if (!skb)
+        return -ENOMEM;
+    req = (struct mt76_connac_hw_scan_req *)skb_put_zero(skb, sizeof(*req));
+
+    mtk_scan_seq = (mtk_scan_seq + 1) & 0x7f;
+    req->seq_num = mtk_scan_seq;
+    req->bss_idx = 0;
+    req->version = 1;
+
+    /* Active only when macOS asked for probes; driver-initiated sweeps
+     * stay passive over every channel (reference behavior). */
+    if (p->active) {
+        req->scan_type = 1;
+        req->probe_req_num = 2;
+        if (p->ssid_len > 0 && p->ssid_len <= MTK_NWID_LEN) {
+            req->ssids[0].ssid_len = cpu_to_le32(p->ssid_len);
+            memcpy(req->ssids[0].ssid, p->ssid, p->ssid_len);
+            n_ssids = 1;
+        }
+    }
+    req->ssid_type = n_ssids ? 0x4 : 0x1;
+    req->ssid_type_ext = n_ssids ? 1 : 0;
+    req->ssids_num = n_ssids;
+
+    for (i = 1; i <= MTK_CHAN_MAX && nchan < MTK_HW_SCAN_MAX_CHAN; i++) {
+        struct mt76_connac_mcu_scan_channel *chan;
+
+        if (p->restricted &&
+            !(p->channels[i / 8] & (1u << (i % 8))))
+            continue;
+        if (nchan < 32)
+            chan = &req->channels[nchan];
+        else
+            chan = &req->ext_channels[nchan - 32];
+        chan->channel_num = (u8)i;
+        /* 1: 2.4GHz, 2: 5GHz (6GHz would be 3, not scanned yet). */
+        chan->band = (i < 15) ? 1 : 2;
+        nchan++;
+    }
+
+    if (nchan <= 32) {
+        req->channels_num = nchan;
+    } else {
+        req->channels_num = 32;
+        req->ext_channels_num = nchan - 32;
+    }
+    req->channel_type = nchan ? 4 : 0;
+    req->timeout_value = cpu_to_le16(nchan * MTK_HW_SCAN_DWELL_MS);
+    req->channel_min_dwell_time = cpu_to_le16(MTK_HW_SCAN_DWELL_MS);
+    req->channel_dwell_time = cpu_to_le16(MTK_HW_SCAN_DWELL_MS);
+    req->scan_func |= SCAN_FUNC_SPLIT_SCAN;
+    /* wildcard BSSID */
+    memset(req->bssid, 0xff, ETH_ALEN);
+
+    set_bit(MT76_HW_SCANNING, &dev->mt76.phy.state);
+    if (mt76_mcu_skb_send_msg(&dev->mt76, skb,
+                              MCU_CE_CMD(START_HW_SCAN), false) != 0) {
+        clear_bit(MT76_HW_SCANNING, &dev->mt76.phy.state);
+        return -EIO;
+    }
+    XYLog("mtk-dbg: hw_scan start seq=%u channels=%u active=%d "
+          "ssid_len=%u dwell=%dms\n",
+          mtk_scan_seq, nchan, p->active, p->ssid_len, MTK_HW_SCAN_DWELL_MS);
+    return 0;
+}
+
+int mtk_hw_scan_active(void *mdev)
+{
+    struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
+
+    return dev && test_bit(MT76_HW_SCANNING, &dev->mt76.phy.state);
+}
+
+int mtk_hw_scan_cancel(void *mdev)
+{
+    struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
+    struct {
+        u8 seq_num;
+        u8 is_ext_channel;
+        u8 rsv[2];
+    } __packed req = { .seq_num = mtk_scan_seq };
+
+    if (!dev)
+        return -EINVAL;
+    clear_bit(MT76_HW_SCANNING, &dev->mt76.phy.state);
+    return mt76_mcu_send_msg(&dev->mt76, MCU_CE_CMD(CANCEL_HW_SCAN),
+                             &req, sizeof(req), true);
+}
+
 void mt7921_scan_work(struct work_struct *work)
 {
-    (void)work; /* TODO(M2): HW scan sequencing */
+    struct mt792x_phy *phy =
+        container_of(work, struct mt792x_phy, scan_work.work);
+    struct mt792x_dev *dev = phy->dev;
+    struct sk_buff *skb;
+    bool got = false;
+
+    while (true) {
+        spin_lock_bh(&dev->mt76.lock);
+        skb = __skb_dequeue(&phy->scan_event_list);
+        spin_unlock_bh(&dev->mt76.lock);
+        if (!skb)
+            break;
+
+        if (skb->len >= sizeof(struct mt76_connac_hw_scan_done)) {
+            struct mt76_connac_hw_scan_done *event =
+                (struct mt76_connac_hw_scan_done *)skb->data;
+            unsigned int probe_sum = 0, mdrdy_sum = 0;
+            int i;
+
+            for (i = 0;
+                 i < MT76_CONNAC_SCAN_DONE_EVENT_MAX_CHANNEL_NUM; i++) {
+                probe_sum += event->beacon_probe_num[i];
+                mdrdy_sum += event->mdrdy_count[i];
+            }
+            XYLog("mtk-dbg: hw_scan done seq=%u complete_ch=%u state=%u "
+                  "beacon_scan=%u probe_sum=%u mdrdy_sum=%u "
+                  "beacon_2g=%u beacon_5g=%u\n",
+                  event->seq_num, event->complete_channel_num,
+                  event->current_state,
+                  le32_to_cpu(event->beacon_scan_num),
+                  probe_sum, mdrdy_sum,
+                  le32_to_cpu(event->beacon_2g_num),
+                  le32_to_cpu(event->beacon_5g_num));
+        } else {
+            XYLog("mtk-dbg: hw_scan done short event len=%u\n", skb->len);
+        }
+        dev_kfree_skb(skb);
+        got = true;
+    }
+    if (!got)
+        return;
+
+    /* ACK the firmware scan state, then hand completion to net80211
+     * (reference: mt7921_mcu_scan_event -> mwx_end_scan_task). */
+    mtk_hw_scan_cancel(dev);
+    mtk_scan_done_notify();
 }
 
 void mt7921_roc_work(struct work_struct *work)
@@ -988,6 +1431,39 @@ void mt7921_stats_work(struct work_struct *work)
 /* ================================================================== */
 /* IRQ / NAPI poll (Linux mt792x_dma.c)                               */
 /* ================================================================== */
+bool mtk_txq_drained(void *mdev)
+{
+    struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
+    struct mt76_queue *tq;
+
+    if (!dev)
+        return true;
+    /* phy.q_tx[] is the alias set the TX scheduler uses. */
+    tq = dev->mt76.phy.q_tx[MT_TXQ_BE];
+    return tq == NULL || tq->queued == 0;
+}
+
+void mtk_rxfilter_set(void *mdev)
+{
+    struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
+
+    if (!dev)
+        return;
+    /*
+     * Standing RX filter: hardware register only, exactly like the
+     * working mwx reference (MtkMwx.cpp:1153-1162): STA mode drops
+     * other-station unicast, everything else -- beacons and probe
+     * responses included -- passes.  Do NOT send the MCU SET_RX_FILTER
+     * command: Linux pairs it with the firmware hw-scan result engine,
+     * and its fif bitmap (FILTER_OTHER_BSS = BIT(6)) collides with
+     * MT_WF_RFCR_DROP_BCAST (BIT(6)) -- a beacon is a broadcast frame.
+     */
+    mt76_clear(dev, MT_WF_RFCR(0), MT_WF_RFCR_DROP_OTHER_BEACON);
+    mt76_set(dev, MT_WF_RFCR(0), MT_WF_RFCR_DROP_OTHER_UC);
+    XYLog("mtk-dbg: rxfilter RFCR(0)=0x%08x (standing, register-only)\n",
+          mt76_rr(dev, MT_WF_RFCR(0)));
+}
+
 void mtk_dbg_mcu_regs(void *mdev, const char *tag)
 {
     struct mt792x_dev *dev = (struct mt792x_dev *)mdev;

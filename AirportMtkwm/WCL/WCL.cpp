@@ -16,6 +16,8 @@
 #include <net80211/ieee80211_priv.h>
 #include <crypto/sha1.h>
 
+extern "C" void mtk_scan_abort(void);   /* mtkwm/glue (mtk_api.h) */
+
 extern IOCommandGate *_fCommandGate;
 
 struct AirportMtkwmSkywalkInterface::CountryUpdate {
@@ -301,6 +303,10 @@ void AirportMtkwmSkywalkInterface::finishWCLScan(IOReturn status)
     scanCompleted = false;
     scanSource->cancelTimeout();
     fHalService->get80211Controller()->ic_wcl_scan_requested = false;
+    /* Abort/timeout: stop the firmware scan engine; on success the
+     * scan-done path already ACKed it (mt7921_scan_work). */
+    if (status != kIOReturnSuccess)
+        mtk_scan_abort();
     instance->postMessage(this, AirportWCL::ScanDone, &status, sizeof(status), true);
 }
 
@@ -325,6 +331,13 @@ void AirportMtkwmSkywalkInterface::publishWCLBeacon(const ieee80211_node *node, 
     /* nmx prefer-5 GHz: keep the joined BSS's info current, hide other 2.4 GHz twins of 5 GHz SSIDs */
     if (!(assocNotified && IEEE80211_ADDR_EQ(node->ni_bssid, joinBSSID)) && nmx_hide_24ghz_twin(ic, node))
         return;
+    { /* TEMP(diag, scan-debug round): capped, removed after localization */
+        static int n;
+        if (n++ < 15)
+            XYLog("mtk-dbg-wcl: publish esslen=%u chan=%u ssid=%.*s rssi=%d\n",
+                  node->ni_esslen, channel, (int)node->ni_esslen,
+                  (const char *)node->ni_essid, (int)node->ni_rssi);
+    }
     size_t size = sizeof(AirportWCL::BeaconMetadata) + length;
     auto metadata = static_cast<AirportWCL::BeaconMetadata *>(IOMalloc(size));
     if (!metadata)
@@ -352,6 +365,13 @@ void AirportMtkwmSkywalkInterface::publishWCLBeacon(const ieee80211_node *node, 
         }
     }
     instance->postMessage(this, AirportWCL::ScanResult, metadata, messageSize, true);
+    { /* TEMP(diag, scan-debug round) */
+        static int n;
+        if (n++ < 15)
+            XYLog("mtk-dbg-wcl: ScanResult posted ssid=%.*s ieLen=%u\n",
+                  (int)metadata->ssidLength, (const char *)metadata->ssid,
+                  metadata->ieLength);
+    }
     IOFree(metadata, size);
 }
 
@@ -700,6 +720,18 @@ void AirportMtkwmSkywalkInterface::handleWCLLink(bool up)
     updateWCLLinkQuality(true);
 }
 
+/*
+ * Reset/availability posting state.  Posting "resetInterfacesComplete"
+ * (ResetInterface reset=1) when no reset is outstanding makes the family
+ * bounce the interface (disable -> enable), and enable() re-fires
+ * DRIVER_READY -- an 8 ms restart loop that aborted every scan after a
+ * single probe_req (enable() and the role-timer kick both fire READY).
+ * Only complete a reset that began, and only post DriverAvailable on
+ * change.
+ */
+static bool wclResetOutstanding = false;
+static int wclAvailLast = -1;
+
 void AirportMtkwmSkywalkInterface::handleWCLEvent(int code, void *data)
 {
     if (wclStopping)
@@ -724,6 +756,7 @@ void AirportMtkwmSkywalkInterface::handleWCLEvent(int code, void *data)
                 break;
             }
             uint32_t reset = 0; // Native resetInterfacesBegin.
+            wclResetOutstanding = true;
             instance->postMessage(this, AirportWCL::ResetInterface, &reset, sizeof(reset), true);
             break;
         }
@@ -748,10 +781,18 @@ void AirportMtkwmSkywalkInterface::handleWCLEvent(int code, void *data)
                     resumeWCLJoin();
                 break;
             }
-            if (ready) {
+            /* Duplicate READY/STOPPED (enable() + the role-timer kick both
+             * fire) must not re-post: see the state note above. */
+            if (!wclResetOutstanding && wclAvailLast == (int)ready)
+                break;
+            wclAvailLast = ready;
+            if (ready && wclResetOutstanding) {
                 uint32_t reset = 1; // Native resetInterfacesComplete, only after HAL success.
                 instance->postMessage(this, AirportWCL::ResetInterface, &reset, sizeof(reset), true);
+                wclResetOutstanding = false;
             }
+            if (!ready)
+                wclResetOutstanding = false;
             AirportWCL::DriverAvailability event = {};
             event.version = 3;
             event.available = ready;

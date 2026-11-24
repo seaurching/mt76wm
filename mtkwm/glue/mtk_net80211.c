@@ -62,9 +62,9 @@ static struct {
 /* ================================================================== */
 /* forward declarations                                               */
 /* ================================================================== */
+extern "C" void mtk_rxq_dump(void);   /* mt7921/mac.c per-ring RX counters */
 static int  mtk_newstate(struct ieee80211com *, enum ieee80211_state, int);
 static void mtk_scan_dwell(void *);
-static void mtk_scan_tune(void);
 static int  mtk_ioctl(struct _ifnet *, u_long, caddr_t);
 static void mtk_start(struct _ifnet *);
 static IOReturn mtk_start_task(OSObject *, void *, void *, void *, void *);
@@ -229,14 +229,21 @@ mtk_net80211_quiesce(void)
      * path ("取消后回调不再入队").  Idempotent.
      */
     g_n.stopping = 1;
+    /* Abort any in-flight firmware scan (reference: hw_scan_cancel). */
+    if (g_n.mdev)
+        mtk_hw_scan_cancel(g_n.mdev);
     if (g_n.scan_to) {
         timeout_del(&g_n.scan_to);
         /*
-         * Also free: a leaked MtkCTimeout instance pins the kext
-         * ("Can't unload kext ... class MtkCTimeout has instances") and
-         * blocks every later unload/reload cycle.
+         * Do NOT timeout_free here.  quiesce() also runs on every
+         * disable, and a freed timer makes every later
+         * timeout_add_msec() fail silently (NULL slot) -- permanently
+         * killing the per-channel scan dwell.  The scan then froze on
+         * one channel and only the 5 s watchdog retry moved anything.
+         * The instance is released in mtk_net80211_ifdetach() for unload
+         * hygiene ("Can't unload kext ... class MtkCTimeout has
+         * instances").
          */
-        timeout_free(&g_n.scan_to);
     }
 }
 
@@ -260,6 +267,10 @@ mtk_net80211_ifdetach(void)
     ifp = IC2IFP(ic);
 
     mtk_net80211_quiesce();
+    /* Unload hygiene: release the dwell timer object here (not in
+     * quiesce) so a leaked MtkCTimeout never pins the kext. */
+    if (g_n.scan_to)
+        timeout_free(&g_n.scan_to);
     ieee80211_ifdetach(ifp);
 
     g_n.sc = NULL;
@@ -386,27 +397,10 @@ mtk_net80211_disable(struct mt76_softc *sc)
 /* ================================================================== */
 /* state machine                                                      */
 /* ================================================================== */
-static void
-mtk_scan_tune(void)
-{
-    struct ieee80211com *ic = &g_n.sc->sc_ic;
-    struct ieee80211_channel *c = ic->ic_bss->ni_chan;
-    unsigned int freq;
-
-    if (g_n.stopping)
-        return;
-    if (c == NULL)
-        return;
-    freq = c->ic_freq;
-    if (freq == 0) {
-        /* ieee80211_reset_scan()'s one-past-end sentinel. */
-        return;
-    }
-    /* Scan hops are offchannel: TX sent from the dwell rides the
-     * offchannel path and is not held back by phy->offchannel. */
-    if (mtk_chan_switch(g_n.mdev, freq, 1) != 0)
-        XYLog("%s: tune to %u MHz failed\n", __FUNCTION__, freq);
-}
+/* mtk_scan_tune() (soft-scan per-hop MCU_EXT_CMD_CHANNEL_SWITCH) is
+ * retired: scanning runs on the firmware engine now (mtk_hw_scan_start).
+ * mtk_scan_dwell stays as the scan_to timer callback; the timer is no
+ * longer armed on the hw_scan path. */
 
 static void
 mtk_scan_dwell(void *arg)
@@ -421,6 +415,35 @@ mtk_scan_dwell(void *arg)
     /* Advance the channel bitmap; re-enters mtk_newstate() per hop and
      * ends in ieee80211_end_scan() when the map is exhausted. */
     ieee80211_next_scan(IC2IFP(ic));
+}
+
+extern "C" void
+mtk_scan_abort(void)
+{
+    if (g_n.mdev)
+        mtk_hw_scan_cancel(g_n.mdev);
+}
+
+/*
+ * Firmware scan completion (from mt7921_scan_work via mtk_scan_done_notify):
+ * hand the sweep back to net80211.  Mirrors the reference
+ * mwx_end_scan_task(): a completion that lands while associated (and not
+ * in a background scan) is stale -- drop it.
+ */
+extern "C" void
+mtk_scan_done_notify(void)
+{
+    struct ieee80211com *ic;
+
+    if (!g_n.sc)
+        return;
+    ic = &g_n.sc->sc_ic;
+    if (ic->ic_state == IEEE80211_S_RUN &&
+        (ic->ic_flags & IEEE80211_F_BGSCAN) == 0) {
+        XYLog("%s: ignoring stale scan completion in RUN\n", __FUNCTION__);
+        return;
+    }
+    ieee80211_end_scan(IC2IFP(ic));
 }
 
 static int
@@ -463,40 +486,44 @@ mtk_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
         mtk_sta_remove(g_n.mdev, ic->ic_bss);
     }
 
-    if (nstate == IEEE80211_S_SCAN && ic->ic_state == IEEE80211_S_SCAN) {
+    if (nstate == IEEE80211_S_SCAN) {
+        struct mtk_hw_scan_params p;
         int error;
 
         /*
-         * Per-channel hop: ieee80211_next_scan() has already updated
-         * ic_bss->ni_chan.  Tune the radio and dwell for a while; the
-         * dwell timeout advances to the next channel.
-         *
-         * M5: the mgmt TX path works, so chain to the default handler
-         * as well - it sends the per-hop probe request (active scan,
-         * IEEE80211_F_ASCAN).  The probe request is broadcast and
-         * queued to ic_mgtq by ieee80211_mgmt_output(); mtk_start()
-         * hands it to the mt76 TX path immediately.  On the second
-         * (passive) sweep ieee80211_end_scan() has cleared ASCAN and
-         * no probe requests are sent.
+         * MCU hardware scan (D-series recipe): the firmware hops the
+         * channels and forwards beacons / probe responses as ordinary
+         * frames on the RX data ring; mt7921_scan_work() ends the sweep
+         * on the scan-done event (-> ieee80211_end_scan).  While the
+         * firmware scan is in flight, net80211's per-hop re-entry is
+         * suppressed -- no per-channel tune, no dwell timer.
          */
-        mtk_scan_tune();
-        error = g_n.sc_newstate(ic, nstate, arg);
-        /* Never re-arm behind a teardown. */
-        if (!g_n.stopping)
-            timeout_add_msec(&g_n.scan_to, MTK_SCAN_DWELL_MS);
-        return error;
-    }
+        if (mtk_hw_scan_active(g_n.mdev))
+            return 0;
 
-    if (nstate == IEEE80211_S_SCAN) {
-        int error;
+        memset(&p, 0, sizeof(p));
+        p.active = ic->ic_wcl_scan_requested && ic->ic_wcl_scan_active;
+        p.ssid_len = p.active ? ic->ic_wcl_scan_ssid_length : 0;
+        if (p.ssid_len)
+            memcpy(p.ssid, ic->ic_wcl_scan_ssid, p.ssid_len);
+        p.restricted = ic->ic_wcl_scan_requested && ic->ic_wcl_scan_restricted;
+        if (p.restricted)
+            memcpy(p.channels, ic->ic_wcl_scan_channels,
+                   sizeof(p.channels));
 
-        XYLog("%s: entering scan (from %d)\n", __FUNCTION__, ic->ic_state);
-        /* Let the default handler bootstrap the scan (begin_scan ->
-         * next_scan -> per-channel hops above).  begin_scan() sets
-         * IEEE80211_F_ASCAN: the first sweep is an active scan with
-         * per-hop probe requests (M5), the follow-up sweeps are
-         * passive (see ieee80211_end_scan()). */
-        error = g_n.sc_newstate(ic, nstate, arg);
+        error = mtk_hw_scan_start(g_n.mdev, &p);
+        if (error) {
+            XYLog("%s: hw_scan start failed (%d)\n", __FUNCTION__, error);
+            return error;
+        }
+        if (ic->ic_state != IEEE80211_S_SCAN) {
+            /*
+             * First entry: let the default handler bootstrap the scan
+             * bookkeeping (begin_scan).  Its next_scan() re-enters here
+             * and is suppressed by the MT76_HW_SCANNING check above.
+             */
+            error = g_n.sc_newstate(ic, nstate, arg);
+        }
         return error;
     }
 
@@ -507,6 +534,20 @@ mtk_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 /* ================================================================== */
 /* RX lower half                                                      */
 /* ================================================================== */
+
+/* TEMP(diag, scan-debug round): unconditional trace of the first 20
+ * frames into the bridge.  Removed once the break is localized. */
+static void mtk_rxin_note(int is_scan_frame, const char *tag,
+                          unsigned int len, unsigned int flags, u8 fc0)
+{
+    static int n;
+
+    if (n++ >= 20)
+        return;
+    XYLog("mtk-dbg-rxin: %s len=%u flags=0x%x fc0=%02x scan=%d\n",
+          tag, len, flags, fc0, is_scan_frame);
+}
+
 extern "C" void
 mtk_net80211_rx(void *mdev, const void *frame, unsigned int len,
                 const struct mtk_rx_meta *meta)
@@ -519,26 +560,61 @@ mtk_net80211_rx(void *mdev, const void *frame, unsigned int len,
     mbuf_t m;
     int rssi;
 
-    if (!sc || mdev != g_n.mdev || frame == NULL || meta == NULL)
+    {
+        static int g;
+
+        if (g++ < 8)
+            XYLog("mtk-dbg-rxin: ENTRY mdev=%p gdev=%p len=%u sc=%p "
+                  "frame=%p meta=%p\n",
+                  mdev, g_n.mdev, len, (void *)sc, frame, (const void *)meta);
+    }
+    if (!sc || mdev != g_n.mdev || frame == NULL || meta == NULL) {
+        static int d;
+
+        if (d++ < 8)
+            XYLog("mtk-dbg-rxin: GUARD-DROP sc=%d mmeq=%d\n",
+                  sc != NULL, mdev == g_n.mdev);
         return;
-    if (len < 2)
+    }
+    if (len < 2) {
+        static int d;
+
+        if (d++ < 8)
+            XYLog("mtk-dbg-rxin: SHORT len=%u\n", len);
         return;
+    }
     ic = &sc->sc_ic;
 
+    /*
+     * Intake semantics mirror mac80211's ieee80211_rx_list() /
+     * ieee80211_rx_monitor(): frames that only a monitor interface
+     * would see are not delivered to the normal path (no monitor tap
+     * is wired yet), frames under 16 bytes are dropped, and 802.3
+     * frames take the (not ported) __ieee80211_rx_handle_8023 path.
+     * Accounting goes through ic_stats only.
+     */
+    u8 fc0 = ((const u_int8_t *)frame)[0];
+    int is_scan_frame =
+        (fc0 & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_MGT &&
+        ((fc0 & IEEE80211_FC0_SUBTYPE_MASK) == IEEE80211_FC0_SUBTYPE_BEACON ||
+         (fc0 & IEEE80211_FC0_SUBTYPE_MASK) == IEEE80211_FC0_SUBTYPE_PROBE_RESP);
+
     if (meta->flags & MTK_RX_FLAG_FAILED_FCS) {
+        mtk_rxin_note(is_scan_frame, "DROP-fcs", len, meta->flags, fc0);
         ic->ic_stats.is_rx_decryptcrc++;    /* FCS/CRC error */
         return;
     }
     if (meta->flags & MTK_RX_FLAG_ONLY_MONITOR) {
-        /* ICV/error frames: monitor only. */
+        /* ICV/error frames: monitor only (Linux: delivered only to
+         * monitor interfaces). */
+        mtk_rxin_note(is_scan_frame, "DROP-monitor", len, meta->flags, fc0);
         return;
     }
     if (meta->flags & MTK_RX_FLAG_8023) {
         /* M5: hardware RX header translation is disabled
          * (MT_MDP_DCR0_RX_HDR_TRANS_EN is not set in mt7921_mac_init),
-         * so data frames arrive as 802.11 and this should not trigger.
-         * Keep the guard as a safety net: 802.3 frames cannot go
-         * through ieee80211_inputm(). */
+         * so data frames arrive as 802.11 and this should not trigger. */
+        mtk_rxin_note(is_scan_frame, "DROP-8023", len, meta->flags, fc0);
         ic->ic_stats.is_rx_decap++;
         return;
     }
@@ -546,28 +622,37 @@ mtk_net80211_rx(void *mdev, const void *frame, unsigned int len,
     /* Discard frames that are too short (control frames are shorter
      * than struct ieee80211_frame but are still valid). */
     if (len < sizeof(struct ieee80211_frame) &&
-        (((const struct ieee80211_frame *)frame)->i_fc[0] &
-         IEEE80211_FC0_TYPE_MASK) != IEEE80211_FC0_TYPE_CTL) {
+        (fc0 & IEEE80211_FC0_TYPE_MASK) != IEEE80211_FC0_TYPE_CTL) {
+        mtk_rxin_note(is_scan_frame, "DROP-short", len, meta->flags, fc0);
         ic->ic_stats.is_rx_tooshort++;
         return;
     }
 
     /* skb -> mbuf copy. */
     if (mbuf_gethdr(MBUF_DONTWAIT, MT_DATA, &m) != 0 || m == NULL) {
+        mtk_rxin_note(is_scan_frame, "DROP-nombuf", len, meta->flags, fc0);
         ic->ic_stats.is_rx_nombuf++;
         return;
     }
     if (len > mbuf_get_mhlen()) {
         mbuf_mclget(MBUF_DONTWAIT, MT_DATA, &m);
         if (!(mbuf_flags(m) & MBUF_EXT)) {
+            mtk_rxin_note(is_scan_frame, "DROP-nocluster", len, meta->flags,
+                          fc0);
             mbuf_free(m);
             ic->ic_stats.is_rx_nombuf++;
             return;
         }
     }
-    if (len > mbuf_len(m)) {
-        /* > MCLBYTES frame (should not happen for mgmt).  TODO(M5):
-         * chain a second cluster if jumbo frames must be supported. */
+    /*
+     * Capacity check: mbuf_len() is the CURRENT data length (0 on a
+     * freshly allocated mbuf), mbuf_maxlen() is the buffer capacity.
+     * The old `len > mbuf_len(m)` compared against 0 and silently
+     * dropped EVERY frame -- the long-standing "frames die before
+     * net80211" bug.  TODO(M5): chain a second cluster for jumbo.
+     */
+    if (len > mbuf_maxlen(m)) {
+        mtk_rxin_note(is_scan_frame, "DROP-toobig", len, meta->flags, fc0);
         mbuf_free(m);
         ic->ic_stats.is_rx_tooshort++;
         return;
@@ -616,6 +701,7 @@ mtk_net80211_rx(void *mdev, const void *frame, unsigned int len,
     if (rxi.rxi_chan > IEEE80211_CHAN_MAX)
         rxi.rxi_chan = 0;
 
+    mtk_rxin_note(is_scan_frame, "inputm", len, meta->flags, fc0);
     ieee80211_inputm(IC2IFP(ic), m, ni, &rxi, &g_n.ml);
     ieee80211_release_node(ic, ni);
 }
@@ -916,6 +1002,16 @@ mtk_watchdog(struct _ifnet *ifp)
 {
     ifp->if_timer = 0;
 
+    /*
+     * The countdown is armed per send (mtk_start_task) and used to be
+     * never cleared on completion, so every packet logged a false
+     * "TX timeout" exactly 5 s later and the scan retry churned around
+     * it.  Drop the countdown once the TX ring has drained (all TXS
+     * reaped); a genuinely stuck TX keeps queued > 0 and still alarms.
+     */
+    if (g_n.tx_timer > 0 && mtk_txq_drained(g_n.mdev))
+        g_n.tx_timer = 0;
+
     if (g_n.tx_timer > 0) {
         if (--g_n.tx_timer == 0) {
             XYLog("%s: TX timeout (device not completing frames)\n",
@@ -928,6 +1024,9 @@ mtk_watchdog(struct _ifnet *ifp)
 
     /* Reap stale TX-status entries and give the TX scheduler a round. */
     mtk_tx_status_check(g_n.mdev);
+
+    /* Per-ring RX counters (mt7921/mac.c); prints only on change. */
+    mtk_rxq_dump();
 
     ieee80211_watchdog(ifp);
 }

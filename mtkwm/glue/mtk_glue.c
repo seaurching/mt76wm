@@ -1005,19 +1005,6 @@ mtk_any_ptr mtk_dma_alloc_coherent(size_t size, dma_addr_t *dma_handle,
     if (dma_handle)
         *dma_handle = blk->dma;
 
-    /* Address-source cross-check (sem bring-up): the working mwx reference
-     * programs getPhysicalAddress() into descriptors, we program the
-     * IODMACommand IOVA.  Log both once per allocation so a mismatch is
-     * visible; cap the noise. */
-    {
-        static int mtk_dma_log_left = 12;
-        if (mtk_dma_log_left > 0 && size >= 128) {
-            mtk_dma_log_left--;
-            XYLog("mtk-dbg-dma: alloc size=0x%x va=%p iova=0x%llx phys=0x%llx\n",
-                  (unsigned)size, va, (unsigned long long)blk->dma,
-                  (unsigned long long)bmd->getPhysicalAddress());
-        }
-    }
     return mtk_any_ptr(va);
 }
 

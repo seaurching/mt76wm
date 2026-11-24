@@ -368,6 +368,31 @@ struct ieee80211_sta *ieee80211_find_sta(struct ieee80211_vif *vif,
     return NULL;
 }
 
+/* Look up a station by transmitter address across the wcid table.
+ * Port of mac80211's ieee80211_find_sta_by_ifaddr() semantics: used by
+ * mt76_check_sta() to resolve the source of a PS-Poll whose RXD carried
+ * no wcid (AP-mode path; returns NULL when no match, like Linux). */
+struct ieee80211_sta *ieee80211_find_sta_by_ifaddr(struct ieee80211_hw *hw,
+                                                   const u8 *addr,
+                                                   const u8 *ifaddr)
+{
+    struct mt76_dev *dev = (struct mt76_dev *)hw->priv;
+    struct ieee80211_sta *sta;
+    struct mt76_wcid *wcid;
+    int i;
+
+    (void)ifaddr;
+    for (i = 0; i < MT76_N_WCIDS; i++) {
+        wcid = dev->wcid[i];        /* stable outside driver teardown */
+        if (!wcid || !wcid->sta)
+            continue;
+        sta = wcid_to_sta(wcid);
+        if (sta && ether_addr_equal(sta->addr, addr))
+            return sta;
+    }
+    return NULL;
+}
+
 void ieee80211_get_tx_rates(struct ieee80211_vif *vif, struct ieee80211_sta *sta,
                             struct sk_buff *skb,
                             struct ieee80211_tx_rate *dest, int count)
@@ -392,6 +417,14 @@ void ieee80211_scan_completed(struct ieee80211_hw *hw,
 void ieee80211_ready_on_channel(struct ieee80211_hw *hw) { (void)hw; }
 void ieee80211_ready_on_channel_expired(struct ieee80211_hw *hw) { (void)hw; }
 void ieee80211_sta_eosp(struct ieee80211_sta *sta) { (void)sta; }
+/* STA power-save bookkeeping lives in mac80211 core on Linux.  MT7921
+ * offloads PS to firmware and never sets MT_WCID_FLAG_CHECK_PS (only
+ * mt76x02 does), so these are unreachable on this family -- no-ops. */
+void ieee80211_sta_pspoll(struct ieee80211_sta *sta) { (void)sta; }
+void ieee80211_sta_uapsd_trigger(struct ieee80211_sta *sta, u8 tid)
+{ (void)sta; (void)tid; }
+void ieee80211_sta_ps_transition(struct ieee80211_sta *sta, bool sleeping)
+{ (void)sta; (void)sleeping; }
 
 void ieee80211_sta_register_airtime(struct ieee80211_sta *sta, u8 tid,
                                     u32 tx_airtime, u32 rx_airtime)

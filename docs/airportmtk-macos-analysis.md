@@ -1,5 +1,10 @@
 # AirportMtk-macOS 对照分析（2026-11-13）
 
+> **权威内部参考（2026-11-23 补）**：`/Users/miyamoto/kc-skywalk/` 存有用户用 Ghidra
+> 反编译的 **IO80211Family（50 万行）/ IOSkywalkFamily** 源码 + 协议头 dump
+> （`IO80211InfraProtocol.h` / `IO80211SkywalkInterface.h`）。排查 apple80211 ioctl
+> 契约、Skywalk 槽位、kernel_task 扫描断链、AWDL 接口时，先查这里再猜。
+
 克隆 [Hi-Jiajun/AirportMtk-macOS](https://github.com/Hi-Jiajun/AirportMtk-macOS)
 （本地 `/Users/miyamoto/Documents/AirportMtk-macOS`）。
 

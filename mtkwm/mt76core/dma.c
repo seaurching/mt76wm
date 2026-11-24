@@ -1061,14 +1061,6 @@ mt76_add_fragment(struct mt76_dev *dev, struct mt76_queue *q, void *data,
 static int
 mt76_dma_rx_process(struct mt76_dev *dev, struct mt76_queue *q, int budget)
 {
-	{
-	    static int mtk_rxp_dbg;
-	    if (mtk_rxp_dbg < 4) {
-		mtk_rxp_dbg++;
-		XYLog("mtk-dbg-rxproc: q=%p tail=%u queued=%d\n",
-		      (void *)q, (unsigned)q->tail, q->queued);
-	    }
-	}
 	int len, data_len, done = 0, dma_idx;
 	struct sk_buff *skb;
 	unsigned char *data;

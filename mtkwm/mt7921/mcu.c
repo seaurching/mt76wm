@@ -419,22 +419,12 @@ void mt7921_mcu_rx_event(struct mt792x_dev *dev, struct sk_buff *skb)
 
 	rxd = (struct mt76_connac2_mcu_rxd *)skb->data;
 
-	{
-	    static int mtk_rxe_dbg;
-	    if (mtk_rxe_dbg++ < 5)
-		XYLog("mtk-dbg-rxev: eid=%u ext_eid=%u seq=%u option=0x%x\n",
-		      (unsigned)rxd->eid, (unsigned)rxd->ext_eid,
-		      (unsigned)rxd->seq, (unsigned)rxd->option);
-	}
-
 	if (rxd->option & MCU_UNI_CMD_UNSOLICITED_EVENT) {
-		XYLog("mtk-dbg-rxev: -> unsolicited\n");
 		mt7921_mcu_uni_rx_unsolicited_event(dev, skb);
 		return;
 	}
 
 	if (rxd->eid == 0x6) {
-		XYLog("mtk-dbg-rxev: -> res_q\n");
 		mt76_mcu_rx_event(&dev->mt76, skb);
 		return;
 	}

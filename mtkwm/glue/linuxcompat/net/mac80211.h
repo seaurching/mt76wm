@@ -245,6 +245,7 @@ struct rate_info {
 #define RX_FLAG_AMPDU_EOF_BIT       (1 << 23)
 #define RX_FLAG_DECRYPTED           (1 << 24)
 #define RX_FLAG_AMSDU_MORE_8023     (1 << 25)
+#define RX_FLAG_PN_VALIDATED        (1 << 26)
 
 /* Ported for mt76wm (XNU): bit values aligned with Linux
  * enum mac80211_rx_encoding_flags (mt76x02 uses RX_ENC_FLAG_SHORTPRE and
@@ -343,6 +344,8 @@ enum ieee80211_iter_flags {
 #define IEEE80211_FCTL_ORDER    0x8000
 #define IEEE80211_FCTL_FTYPE    0x000c
 #define IEEE80211_FCTL_STYPE    0x00f0
+
+#define IEEE80211_SCTL_FRAG     0x000F
 
 #define IEEE80211_STYPE_ASSOC_REQ   0x0000
 #define IEEE80211_STYPE_ASSOC_RESP  0x0010
@@ -621,6 +624,10 @@ static inline int ieee80211_has_morefrags(__le16 fc)
 {
     return le16_to_cpu(fc) & IEEE80211_FCTL_MOREFRAGS;
 }
+static inline int ieee80211_has_pm(__le16 fc)
+{
+    return le16_to_cpu(fc) & IEEE80211_FCTL_PM;
+}
 static inline int ieee80211_has_a4(__le16 fc)
 {
     u16 tmp = le16_to_cpu(fc);
@@ -631,9 +638,14 @@ static inline int ieee80211_has_order(__le16 fc)
 {
     return le16_to_cpu(fc) & IEEE80211_FCTL_ORDER;
 }
-static inline int ieee80211_is_first_frag(__le16 fc)
+static inline int ieee80211_is_first_frag(__le16 seq_ctrl)
 {
-    return !ieee80211_has_morefrags(fc);
+    return !(seq_ctrl & cpu_to_le16(IEEE80211_SCTL_FRAG));
+}
+static inline int ieee80211_is_frag(struct ieee80211_hdr *hdr)
+{
+    return ieee80211_has_morefrags(hdr->frame_control) ||
+           hdr->seq_ctrl & cpu_to_le16(IEEE80211_SCTL_FRAG);
 }
 
 static inline int ieee80211_hdrlen(__le16 fc)
@@ -2469,6 +2481,8 @@ struct ieee80211_sta *ieee80211_find_sta_by_ifaddr(struct ieee80211_hw *hw,
                                                    const u8 *ifaddr);
 struct ieee80211_sta *ieee80211_find_sta_by_idx(struct ieee80211_hw *hw,
                                                 int idx);
+void ieee80211_sta_pspoll(struct ieee80211_sta *sta);
+void ieee80211_sta_uapsd_trigger(struct ieee80211_sta *sta, u8 tid);
 void ieee80211_sta_ps_transition(struct ieee80211_sta *sta, bool sleeping);
 void ieee80211_sta_ps_transition_wk(struct ieee80211_vif *vif, bool sleeping);
 void ieee80211_sta_set_buffered(struct ieee80211_sta *sta, u8 tid, bool buffered);

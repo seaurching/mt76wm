@@ -1747,6 +1747,9 @@ ieee80211_recv_probe_resp(struct ieee80211com *ic, mbuf_t m,
     /* make sure all mandatory fixed fields are present */
     if (mbuf_len(m) < sizeof(*wh) + 12) {
         DPRINTF(("frame too short\n"));
+        { static int n; if (n++ < 15)
+            XYLog("mtk-dbg-scan: DROP-short probe=%d len=%u state=%d\n",
+                  isprobe, (unsigned)mbuf_len(m), ic->ic_state); }
         return;
     }
     wh = mtod(m, struct ieee80211_frame *);
@@ -1894,6 +1897,9 @@ ieee80211_recv_probe_resp(struct ieee80211com *ic, mbuf_t m,
           (ic->ic_flags & IEEE80211_F_BGSCAN) == 0))) {
         DPRINTF(("ignore %s with invalid channel %u\n",
                  isprobe ? "probe response" : "beacon", chan));
+        { static int n; if (n++ < 15)
+            XYLog("mtk-dbg-scan: DROP-badchan probe=%d chan=%u active=%d state=%d\n",
+                  isprobe, chan, isset(ic->ic_chan_active, chan), ic->ic_state); }
         ic->ic_stats.is_rx_badchan++;
         return;
     }
@@ -1910,6 +1916,9 @@ ieee80211_recv_probe_resp(struct ieee80211com *ic, mbuf_t m,
          */
         DPRINTF(("ignore %s on channel %u marked for channel %u\n",
                  isprobe ? "probe response" : "beacon", bchan, chan));
+        { static int n; if (n++ < 15)
+            XYLog("mtk-dbg-scan: DROP-chanmis probe=%d chan=%u bchan=%u rxi=%u state=%d\n",
+                  isprobe, chan, bchan, rxi->rxi_chan, ic->ic_state); }
         ic->ic_stats.is_rx_chanmismatch++;
         return;
     }
@@ -2194,6 +2203,10 @@ ieee80211_recv_probe_resp(struct ieee80211com *ic, mbuf_t m,
         const uint8_t *ies = (const uint8_t *)&wh[1] + 12;
         const uint8_t *end = mtod(m, const uint8_t *) + mbuf_len(m);
         if (end >= ies) {
+            { static int n; if (n++ < 15)
+                XYLog("mtk-dbg-scan: EVT-BEACON probe=%d chan=%u ssid=%.*s rssi=%u\n",
+                      isprobe, chan, ssid ? ssid[1] : 0,
+                      ssid ? (const char *)ssid + 2 : "", (unsigned)rxi->rxi_rssi); }
             struct ieee80211_beacon_event event = {ni, ies, (size_t)(end - ies),
                 (const uint8_t *)wh, (size_t)(end - (const uint8_t *)wh)};
             ic->ic_event_handler(ic, IEEE80211_EVT_BEACON, &event);

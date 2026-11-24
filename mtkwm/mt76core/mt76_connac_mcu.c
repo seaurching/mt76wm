@@ -81,8 +81,6 @@ int mt76_connac_mcu_init_download(struct mt76_dev *dev, u32 addr, u32 len,
 
 	{
 		int ret2 = mt76_mcu_send_msg(dev, cmd, &req, sizeof(req), true);
-		XYLog("mtk-dbg-initdl: cmd=%08x addr=0x%x len=%u mode=0x%x ret=%d\n",
-		      cmd, addr, len, mode, ret2);
 		if (ret2) {
 			extern void mtk_dbg_mcu_regs(void *mdev, const char *tag);
 			mtk_dbg_mcu_regs(dev, "initdl-fail");

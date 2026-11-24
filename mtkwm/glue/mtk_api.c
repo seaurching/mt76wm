@@ -177,9 +177,6 @@ extern "C" void mtk_pci_deinit(struct mt76_softc *sc)
 
 extern "C" bool mtk_intr_filter(struct mt76_softc *sc)
 {
-    static unsigned int mtk_dbg_irqs;
-    if (mtk_dbg_irqs < 5)
-        XYLog("mtk-dbg: intr_filter #%u\n", ++mtk_dbg_irqs);
     const struct mtk_dev_ops *ops = map_ops(sc);
 
     if (ops && ops->intr_filter)

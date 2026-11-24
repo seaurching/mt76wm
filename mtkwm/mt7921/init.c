@@ -84,6 +84,16 @@ int mt7921_mac_init(struct mt792x_dev *dev)
 	 */
 	mt76_clear(dev, MT_MDP_DCR0, MT_MDP_DCR0_RX_HDR_TRANS_EN);
 
+	/*
+	 * Open the MAC RX filter (mwx_mac_init parity).  The firmware
+	 * default drops other-BSS frames, which during scan means every
+	 * beacon and probe response -- the list stays empty while TX looks
+	 * healthy.  Linux routes this through mac80211's configure_filter ->
+	 * mt7921_mcu_set_rxfilter(); the net80211 glue has no such bridge,
+	 * so program MT_WF_RFCR directly like the working mwx driver.
+	 */
+	mt76_wr(dev, MT_WF_RFCR(0), 0);
+
 	for (i = 0; i < MT792x_WTBL_SIZE; i++)
 		mt7921_mac_wtbl_update(dev, i,
 				       MT_WTBL_UPDATE_ADM_COUNT_CLEAR);

@@ -580,18 +580,86 @@ EXPORT_SYMBOL_GPL(mt7921_rx_check);
 
 static void mt7921_queue_rx_skb_impl(struct mt76_dev *mdev, enum mt76_rxq_id q, struct sk_buff *skb, u32 *info);
 
+static uint64_t mtk_rxq_cnt[4];
+
+/* TEMP(diag, scan-debug round): frame-type census + raw RXD of the
+ * first NORMAL frames, to see whether beacons reach the data ring at
+ * all and which fill_rx drop site eats them.  Removed after localization. */
+static void mtk_rxtype_note(int slot, unsigned int len, const void *data,
+                            int fill_ret)
+{
+	static uint64_t cnt[6];
+	static uint64_t shown[6];
+	static int prints;
+	int i;
+
+	if (slot >= 0 && slot < 6)
+		cnt[slot]++;
+	for (i = 0; i < 6; i++)
+		if (cnt[i] != shown[i])
+			break;
+	if (i < 6 && prints < 10) {
+		memcpy(shown, cnt, sizeof(cnt));
+		prints++;
+		XYLog("mtk-dbg-rxtype: notify=%llu event=%llu txs=%llu mcu=%llu "
+		      "normal=%llu other=%llu\n",
+		      (unsigned long long)cnt[0], (unsigned long long)cnt[1],
+		      (unsigned long long)cnt[2], (unsigned long long)cnt[3],
+		      (unsigned long long)cnt[4], (unsigned long long)cnt[5]);
+	}
+	if (slot >= 3) {
+		static int ndump;
+		const u32 *rxd = (const u32 *)data;
+
+		if (ndump++ < 18 && rxd)
+			XYLog("mtk-dbg-rxfill: slot=%d len=%u rxd=%08x %08x %08x "
+			      "%08x %08x %08x %08x %08x %08x %08x fill=%d\n",
+			      slot, len, rxd[0], rxd[1], rxd[2], rxd[3],
+			      rxd[4], rxd[5], rxd[6], rxd[7], rxd[8], rxd[9],
+			      fill_ret);
+	}
+}
+
+/* Called from the net80211 watchdog; prints only on change. */
+extern "C" void mtk_rxq_dump(void)
+{
+	static uint64_t shown[4];
+	static int printed_zero;
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		if (mtk_rxq_cnt[i] != shown[i])
+			break;
+	}
+	if (i == 4 && printed_zero)
+		return;
+	for (i = 0; i < 4; i++)
+		shown[i] = mtk_rxq_cnt[i];
+	printed_zero = 1;
+	XYLog("mtk-dbg-rxcnt: mcu=%llu wa=%llu data=%llu x=%llu\n",
+	      (unsigned long long)mtk_rxq_cnt[0],
+	      (unsigned long long)mtk_rxq_cnt[1],
+	      (unsigned long long)mtk_rxq_cnt[2],
+	      (unsigned long long)mtk_rxq_cnt[3]);
+}
+
 void mt7921_queue_rx_skb(struct mt76_dev *mdev, enum mt76_rxq_id q,
 			 struct sk_buff *skb, u32 *info)
 {
+	/* Per-ring RX counters: answer "does anything arrive on the data
+	 * ring at all?" (ring-state bring-up diagnostic). */
 	{
-	    static int mtk_rxs_dbg;
-	    if (mtk_rxs_dbg < 4 && skb) {
-		mtk_rxs_dbg++;
-		u8 *d = skb->data;
-		XYLog("mtk-dbg-rxskb: qid=%d len=%u %02x %02x %02x %02x %02x %02x %02x %02x "
-		      "%02x %02x %02x %02x %02x %02x %02x %02x\n",
-		      (int)q, skb->len, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7],
-		      d[8], d[9], d[10], d[11], d[12], d[13], d[14], d[15]);
+	    static int mtk_rxq_log;
+	    unsigned int qi = (unsigned int)q;
+
+	    if (qi < 4) {
+		mtk_rxq_cnt[qi]++;
+		/* Rate-limited change log: only when a ring starts moving. */
+		if (mtk_rxq_log < 24 && mtk_rxq_cnt[qi] <= 3) {
+		    mtk_rxq_log++;
+		    XYLog("mtk-dbg-rxcount: first frames qid=%u total=%llu\n",
+			  qi, (unsigned long long)mtk_rxq_cnt[qi]);
+		}
 	    }
 	}
 	mt7921_queue_rx_skb_impl(mdev, q, skb, info);
@@ -614,6 +682,7 @@ static void mt7921_queue_rx_skb_impl(struct mt76_dev *mdev, enum mt76_rxq_id q,
 
 	switch (type) {
 	case PKT_TYPE_TXRX_NOTIFY:
+		mtk_rxtype_note(0, skb->len, NULL, -777);
 		if (!mt76_is_mmio(mdev)) {
 			napi_consume_skb(skb, 1);
 			break;
@@ -622,21 +691,40 @@ static void mt7921_queue_rx_skb_impl(struct mt76_dev *mdev, enum mt76_rxq_id q,
 		napi_consume_skb(skb, 1);
 		break;
 	case PKT_TYPE_RX_EVENT:
+		mtk_rxtype_note(1, skb->len, NULL, -777);
 		mt7921_mcu_rx_event(dev, skb);
 		break;
 	case PKT_TYPE_TXS:
+		mtk_rxtype_note(2, skb->len, NULL, -777);
 		for (rxd += 2; rxd + 8 <= end; rxd += 8)
 			mt7921_mac_add_txs(dev, rxd);
 		dev_kfree_skb(skb);
 		break;
 	case PKT_TYPE_NORMAL_MCU:
-	case PKT_TYPE_NORMAL:
-		if (!mt7921_mac_fill_rx(dev, skb)) {
+	case PKT_TYPE_NORMAL: {
+		u32 rxd_copy[10];
+		unsigned int slen = skb->len;
+		int slot = (type == PKT_TYPE_NORMAL_MCU) ? 3 : 4;
+		int fret;
+
+		if (slen >= sizeof(rxd_copy))
+			memcpy(rxd_copy, skb->data, sizeof(rxd_copy));
+		else {
+			memset(rxd_copy, 0, sizeof(rxd_copy));
+			if (slen >= 4)
+				memcpy(rxd_copy, skb->data, slen & ~3u);
+		}
+		fret = mt7921_mac_fill_rx(dev, skb);
+		mtk_rxtype_note(slot, slen, rxd_copy, fret);
+		if (!fret) {
 			mt76_rx(&dev->mt76, q, skb);
 			return;
 		}
-		fallthrough;
+		dev_kfree_skb(skb);
+		break;
+	}
 	default:
+		mtk_rxtype_note(5, skb->len, NULL, -777);
 		dev_kfree_skb(skb);
 		break;
 	}
