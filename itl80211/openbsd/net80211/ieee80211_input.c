@@ -2177,6 +2177,20 @@ ieee80211_recv_probe_resp(struct ieee80211com *ic, mbuf_t m,
         memcpy(ni->ni_essid, &ssid[2], ssid[1]);
     }
     IEEE80211_ADDR_COPY(ni->ni_bssid, wh->i_addr3);
+    {   /* TEMP(join-debug): beacon sightings of the join target -- the
+         * radio must keep hearing P30 right through the auth window.
+         * Only the first few peacetime sightings are logged (the cap
+         * must not burn at boot before the AUTH window opens). */
+        static const u_int8_t p30[6] = {0x32, 0xd3, 0x5a, 0x34, 0x54, 0x60};
+        static int np;
+
+        if (IEEE80211_ADDR_EQ(wh->i_addr2, p30) && np < 24 &&
+            (ic->ic_state == IEEE80211_S_AUTH || np < 4)) {
+            np++;
+            XYLog("mtk-dbg-p30: beacon from P30 state=%d rssi=%u\n",
+                  ic->ic_state, (unsigned)rxi->rxi_rssi);
+        }
+    }
     if (ic->ic_state == IEEE80211_S_SCAN &&
         IEEE80211_IS_CHAN_5GHZ(ni->ni_chan)) {
         /*
@@ -2351,6 +2365,14 @@ ieee80211_recv_auth(struct ieee80211com *ic, mbuf_t m,
     status = LE_READ_2(frm); frm += 2;
     DPRINTF(("auth %d seq %d from %s\n", algo, seq,
              ether_sprintf((u_int8_t *)wh->i_addr2)));
+    {   /* TEMP(join-debug): did the AP answer our auth, and how? */
+        static int n;
+
+        if (n++ < 12)
+            XYLog("mtk-dbg-auth: recv algo=%u seq=%u status=%u from=%s\n",
+                  algo, seq, status,
+                  ether_sprintf((u_int8_t *)wh->i_addr2));
+    }
     
     if (algo == IEEE80211_AUTH_ALG_SAE) {
         ieee80211_sae_rx_auth(ic, m, ni, seq, status);
@@ -2734,7 +2756,6 @@ void
 ieee80211_recv_assoc_resp(struct ieee80211com *ic, mbuf_t m,
                           struct ieee80211_node *ni, int reassoc)
 {
-    XYLog("%s reassoc=%d\n", __FUNCTION__, reassoc);
     struct _ifnet *ifp = &ic->ic_if;
     const struct ieee80211_frame *wh;
     const u_int8_t *frm, *efrm;
@@ -2764,6 +2785,16 @@ ieee80211_recv_assoc_resp(struct ieee80211com *ic, mbuf_t m,
     
     capinfo = LE_READ_2(frm); frm += 2;
     status =  LE_READ_2(frm); frm += 2;
+
+    {   /* TEMP(join-debug): the assoc verdict from the AP. */
+        static int n;
+
+        if (n++ < 10)
+            XYLog("mtk-dbg-assoc: recv reassoc=%d status=%u from="
+                  "%02x:%02x:%02x:%02x:%02x:%02x\n", reassoc, status,
+                  wh->i_addr2[0], wh->i_addr2[1], wh->i_addr2[2],
+                  wh->i_addr2[3], wh->i_addr2[4], wh->i_addr2[5]);
+    }
 
     ic->ic_assoc_status = status;
     if (status == IEEE80211_STATUS_SUCCESS) {
@@ -2853,18 +2884,33 @@ ieee80211_recv_assoc_resp(struct ieee80211com *ic, mbuf_t m,
     }
     /* supported rates element is mandatory */
     if (rates == NULL || rates[1] > IEEE80211_RATE_MAXSIZE) {
-        DPRINTF(("invalid supported rates element\n"));
-        return;
-    }
+        /*
+         * mt76wm: do NOT abort here.  The AP answered status=0: the
+         * association is accepted.  Bailing out skipped the
+         * ieee80211_new_state(S_RUN) below, and mtk_start_task only
+         * dequeues data frames in S_RUN -- so the EAPOL message 2/4 sat
+         * in if_snd while the AP retransmitted message 1 forever.
+         */
+        XYLog("mtk-dbg-assoc: resp rates ie unusable (rates=%p), continuing to RUN\n",
+              rates);
+        if (ni->ni_rates.rs_nrates == 0)
+            ni->ni_rates = ieee80211_std_rateset_11b;
+    } else {
     rate = ieee80211_setup_rates(ic, ni, rates, xrates,
                                  IEEE80211_F_DOSORT | IEEE80211_F_DOFRATE | IEEE80211_F_DONEGO |
                                  IEEE80211_F_DODEL);
     if (rate & IEEE80211_RATE_BASIC) {
-        DPRINTF(("rate mismatch for %s\n",
-                 ether_sprintf((u_int8_t *)wh->i_addr2)));
+        /* Same reasoning as above: a rate-set mismatch must not void an
+         * already-accepted association. */
+        XYLog("mtk-dbg-assoc: rate mismatch 0x%04x for %s, continuing to RUN\n",
+              rate, ether_sprintf((u_int8_t *)wh->i_addr2));
         ic->ic_stats.is_rx_assoc_norate++;
-        return;
+        if (ni->ni_rates.rs_nrates == 0)
+            ni->ni_rates = ieee80211_std_rateset_11b;
     }
+    }
+    if (ni->ni_txrate >= ni->ni_rates.rs_nrates)
+        ni->ni_txrate = 0;
     ni->ni_capinfo = capinfo;
     ni->ni_associd = associd;
     if (edcaie != NULL || wmmie != NULL) {
@@ -2954,6 +3000,8 @@ ieee80211_recv_assoc_resp(struct ieee80211com *ic, mbuf_t m,
     } else if (ic->ic_flags & IEEE80211_F_WEPON)
         ni->ni_flags |= IEEE80211_NODE_TXRXPROT;
     
+    XYLog("mtk-dbg-assoc: accepted from %s, moving to RUN\n",
+          ether_sprintf((u_int8_t *)wh->i_addr2));
     ieee80211_new_state(ic, IEEE80211_S_RUN,
                         IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
 }
@@ -2981,7 +3029,9 @@ ieee80211_recv_deauth(struct ieee80211com *ic, mbuf_t m,
     
     reason = LE_READ_2(frm);
 
-    XYLog("Deauth received, reason %d\n", reason);
+    XYLog("mtk-dbg-deauth: reason %d from=%02x:%02x:%02x:%02x:%02x:%02x state=%d\n",
+          reason, wh->i_addr2[0], wh->i_addr2[1], wh->i_addr2[2],
+          wh->i_addr2[3], wh->i_addr2[4], wh->i_addr2[5], ic->ic_state);
     ic->ic_deauth_reason = reason;
     if (ic->ic_event_handler) {
         (*ic->ic_event_handler)(ic, IEEE80211_EVT_STA_DEAUTH, NULL);
@@ -3051,7 +3101,9 @@ ieee80211_recv_disassoc(struct ieee80211com *ic, mbuf_t m,
     
     reason = LE_READ_2(frm);
     
-    XYLog("Disassoc received, reason %d\n", reason);
+    XYLog("mtk-dbg-disassoc: reason %d from=%02x:%02x:%02x:%02x:%02x:%02x state=%d\n",
+          reason, wh->i_addr2[0], wh->i_addr2[1], wh->i_addr2[2],
+          wh->i_addr2[3], wh->i_addr2[4], wh->i_addr2[5], ic->ic_state);
     
     ic->ic_stats.is_rx_disassoc++;
     switch (ic->ic_opmode) {

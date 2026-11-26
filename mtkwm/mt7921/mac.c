@@ -198,8 +198,15 @@ mt7921_mac_fill_rx(struct mt792x_dev *dev, struct sk_buff *skb)
 	if (rxd1 & MT_RXD1_NORMAL_BAND_IDX)
 		return -EINVAL;
 
-	if (!test_bit(MT76_STATE_RUNNING, &mphy->state))
+	if (!test_bit(MT76_STATE_RUNNING, &mphy->state)) {
+		/* TEMP(join-debug): the RX-side deafness signature -- frames
+		 * reach the ring but die here when the datapath bit is gone. */
+		static int n;
+
+		if (n++ < 8)
+			XYLog("mtk-dbg: fill_rx DROP !RUNNING (frame dropped)\n");
 		return -EINVAL;
+	}
 
 	if (rxd2 & MT_RXD2_NORMAL_AMSDU_ERR)
 		return -EINVAL;
@@ -445,6 +452,15 @@ void mt7921_mac_add_txs(struct mt792x_dev *dev, void *data)
 	__le32 *txs_data = (__le32 *)data;
 	u16 wcidx;
 	u8 pid;
+
+	{   /* TEMP(join-debug): raw TXS words; the ACK status decodes here. */
+		static int n;
+		const u32 *t = (const u32 *)data;
+
+		if (n++ < 12)
+			XYLog("mtk-dbg-txs: %08x %08x %08x %08x %08x %08x %08x %08x\n",
+			      t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7]);
+	}
 
 	if (le32_get_bits(txs_data[0], MT_TXS0_TXS_FORMAT) > 1)
 		return;

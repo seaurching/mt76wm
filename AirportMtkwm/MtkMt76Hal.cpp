@@ -27,6 +27,16 @@ nmx_hide_24ghz_twin(struct ieee80211com *ic, const struct ieee80211_node *node)
 		    !IEEE80211_IS_CHAN_5GHZ(o->ni_chan) || o->ni_esslen != node->ni_esslen ||
 		    memcmp(o->ni_essid, node->ni_essid, node->ni_esslen) != 0)
 			continue;
+		/*
+		 * Freshness: only hide while the 5 GHz twin was seen recently
+		 * (30 s).  A stale 5 GHz entry must not suppress the 2.4 GHz
+		 * twin forever -- its channel may fall outside the framework's
+		 * scan subsets and its cache entry simply expires, which made
+		 * the whole SSID vanish from the menu (KingSoft: hidden 2.4G
+		 * twin + expired 5G entry).
+		 */
+		if (airport_up_time() - o->ni_age_ts > 30000)
+			continue;
 		if (o->ni_rssi + 15 >= node->ni_rssi)
 			return true;
 	}

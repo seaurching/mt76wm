@@ -1697,6 +1697,8 @@ justcleanup:
                     " HE enabled" : "");
 			}
 #if defined(AIRPORT_WCL)
+            XYLog("mtk-dbg: RUN link gate rsnon=%d (defer to port valid if 1)\n",
+                  !!(ic->ic_flags & IEEE80211_F_RSNON));
             if (!(ic->ic_flags & IEEE80211_F_RSNON)) {
 #elif defined(USE_APPLE_SUPPLICANT)
             {
@@ -1747,6 +1749,7 @@ ieee80211_set_link_state(struct ieee80211com *ic, int nstate)
 		break;
 	}
     link_state = nstate;
+    XYLog("mtk-dbg: set_link_state req=%d cur=%d\n", link_state, ifp->if_link_state);
     if (link_state != ifp->if_link_state) {
         ifp->if_link_state = link_state;
         if (link_state == LINK_STATE_UP) {

@@ -616,20 +616,33 @@ void mt76_connac2_mac_write_txwi(struct mt76_dev *dev, __le32 *txwi,
 		txwi[6] |= cpu_to_le32(val);
 		txwi[3] |= cpu_to_le32(MT_TXD3_BA_DISABLE);
 
-		/* Fixed-rate frames (all mgmt, so auth/assoc req too) otherwise
-		 * carry spe_idx 0 and TX 1SS 1T on WF0. Fill spe_idx like the
-		 * other connac generations do, but do NOT touch
-		 * MT_TXD6_SPE_ID_IDX: on connac2 setting it points HW at the
-		 * WTBL and the index below is ignored.
-		 *
-		 * spe_idx 0 is also a valid single-path index (WF0), so only
-		 * take the duplicate fallback when a second path exists.
-		 */
-		if (!spe_idx && hweight8(mphy->antenna_mask) > 1)
-			spe_idx = 24 + phy_idx;
+		/* spe_idx like Linux (ant_to_spe): 0 for the 2-chain mask is
+		 * the WF0 single-path index the working mwx reference leaves
+		 * in place.  Do NOT touch MT_TXD6_SPE_ID_IDX: on connac2 it
+		 * points the HW at the WTBL and the index below is ignored.
+		 * (An earlier "24 + phy_idx" fallback here made the auth
+		 * frame radiate with a bad antenna pattern: TXS ACK_TIMEOUT
+		 * on every attempt.) */
 		txwi[7] |= cpu_to_le32(FIELD_PREP(MT_TXD7_SPE_IDX, spe_idx));
 
 		txwi[7] &= ~cpu_to_le32(MT_TXD7_HW_AMSDU);
+	}
+
+	{   /* TEMP(join-debug): final TXWI for mgmt frames, after the
+	 * fix-rate block (txwi[2] HTC_VLD, txwi[6] rate, txwi[7] SPE). */
+		static int n;
+
+		if (n++ < 10 && !is_8023) {
+			struct ieee80211_hdr *h = (struct ieee80211_hdr *)skb->data;
+
+			if (!ieee80211_is_data(h->frame_control))
+				XYLog("mtk-dbg-txwi: %08x %08x %08x %08x %08x %08x %08x %08x ant=%02x\n",
+				      le32_to_cpu(txwi[0]), le32_to_cpu(txwi[1]),
+				      le32_to_cpu(txwi[2]), le32_to_cpu(txwi[3]),
+				      le32_to_cpu(txwi[4]), le32_to_cpu(txwi[5]),
+				      le32_to_cpu(txwi[6]), le32_to_cpu(txwi[7]),
+				      mphy->antenna_mask);
+		}
 	}
 }
 EXPORT_SYMBOL_GPL(mt76_connac2_mac_write_txwi);

@@ -417,6 +417,12 @@ public:
     
 #ifdef AIRPORT_WCL
     bool initWCL();
+    /* Family-message posts from RX/scan contexts must be deferred onto
+     * the command gate (the bulletin-board list is workloop-serialized;
+     * foreign-thread posts corrupt it). */
+    void postWCLDeferred(uint32_t id, const void *data, uint32_t size);
+    static IOReturn wclPostGated(OSObject *, void *, void *, void *, void *);
+    static void wclPostDrain(void *, void *);
     void free() override;
     void stopWCL();
     void handleWCLEvent(int, void *);

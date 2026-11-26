@@ -55,9 +55,16 @@ static struct {
     MtkCTimeout          *scan_to;     /* per-channel dwell timer           */
     struct mbuf_list   ml;          /* RX batch for ieee80211_inputm()   */
     int                running;
+    int                sta_added;   /* firmware peer programmed (RUN)  */
     int                stopping;    /* teardown: no new tunes / re-arms  */
     int                tx_timer;    /* TX watchdog countdown (ticks)     */
 } g_n;
+
+/*
+ * Guards g_n.ml: the RX tasklet appends to it while mtk_net80211_disable()
+ * (workloop) drains it.  Allocated once for the kext lifetime.
+ */
+static IOSimpleLock *g_ml_lock;
 
 /* ================================================================== */
 /* forward declarations                                               */
@@ -141,6 +148,8 @@ mtk_net80211_attach(struct mt76_softc *sc)
     memset(&g_n, 0, sizeof(g_n));
     g_n.sc = sc;
     g_n.mdev = mtk_get_mdev(sc);
+    if (g_ml_lock == NULL)
+        g_ml_lock = IOSimpleLockAlloc();
 
     ic = &sc->sc_ic;
     ifp = IC2IFP(ic);
@@ -177,14 +186,20 @@ mtk_net80211_attach(struct mt76_softc *sc)
     /* MAC address recorded by the mt76 probe (mt76_phy.macaddr). */
     if (mtk_get_mac(g_n.mdev, (unsigned char *)ic->ic_myaddr) != 0 ||
         IEEE80211_ADDR_EQ(ic->ic_myaddr, etheranyaddr)) {
-        /* No valid address: locally-administered placeholder. */
+        /* No valid address: locally-administered placeholder.  Keep it
+         * in mt76_phy.macaddr too so the firmware vif/OMAC registered at
+         * init filters on the same address the frames carry. */
         memset(ic->ic_myaddr, 0, IEEE80211_ADDR_LEN);
         ic->ic_myaddr[0] = 0x02;
+        mtk_set_mac(g_n.mdev, (const unsigned char *)ic->ic_myaddr);
     }
 
     /* ---- ifp setup (mirrors ItlIwn::attach) ---- */
     ifp->if_softc = sc;
-    ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST | IFF_DEBUG;
+    /* NB: no IFF_DEBUG -- on this XNU it makes the socket layer flood
+     * dmesg with tcp_connection_summary lines, churning the only debug
+     * channel we have within seconds. */
+    ifp->if_flags = IFF_BROADCAST | IFF_SIMPLEX | IFF_MULTICAST;
     ifp->if_ioctl = mtk_ioctl;
     ifp->if_start = mtk_start;
     ifp->if_watchdog = mtk_watchdog;
@@ -278,6 +293,62 @@ mtk_net80211_ifdetach(void)
     g_n.running = 0;
 }
 
+/*
+ * The factory MAC only becomes known once the asynchronous firmware bring-up
+ * has parsed the NIC-capability TLVs (mt7921_run_firmware() ->
+ * mt7921_mcu_get_nic_capability()), which runs on the mt76 init work item,
+ * long after mtk_net80211_attach() installed the 02:00:00:00:00:00
+ * placeholder.  mtk_hw_start() -- called from mtk_net80211_enable() -- blocks
+ * on the MCU "init done" gate, so by the time we get there
+ * mt76_phy.macaddr holds the factory address.  Adopt it, so that net80211 and
+ * BSD (what DHCP and ARP use) and the firmware's own-address filter (the
+ * vif/OMAC record built from mt76_phy.macaddr during __mt7921_start) all
+ * refer to the same address.  An address already chosen by the upper layer
+ * (macOS per-network private Wi-Fi address) is never overridden.
+ */
+static bool
+mtk_mac_usable(const unsigned char *addr)
+{
+    static const unsigned char placeholder[IEEE80211_ADDR_LEN] =
+        { 0x02, 0, 0, 0, 0, 0 };
+
+    return !IEEE80211_ADDR_EQ(addr, etheranyaddr) &&
+           !IEEE80211_ADDR_EQ(addr, placeholder);
+}
+
+static void
+mtk_net80211_sync_mac(void)
+{
+    unsigned char mac[IEEE80211_ADDR_LEN];
+    struct ieee80211com *ic = &g_n.sc->sc_ic;
+    struct _ifnet *ifp = IC2IFP(ic);
+
+    if (mtk_get_mac(g_n.mdev, mac) != 0) {
+        XYLog("%s: mtk_get_mac failed, keeping %s\n", __FUNCTION__,
+              ether_sprintf(ic->ic_myaddr));
+        return;
+    }
+    if (!mtk_mac_usable(mac)) {
+        XYLog("%s: no factory MAC yet (%s), keeping %s\n", __FUNCTION__,
+              ether_sprintf(mac), ether_sprintf(ic->ic_myaddr));
+        return;
+    }
+    if (IEEE80211_ADDR_EQ(ic->ic_myaddr, mac))
+        return;
+    if (mtk_mac_usable(ic->ic_myaddr) ||
+        mtk_mac_usable(((struct arpcom *)ifp)->ac_enaddr)) {
+        XYLog("%s: keeping upper layer MAC %s\n", __FUNCTION__,
+              ether_sprintf(ic->ic_myaddr));
+        return;
+    }
+
+    IEEE80211_ADDR_COPY(ic->ic_myaddr, mac);
+    IEEE80211_ADDR_COPY(((struct arpcom *)ifp)->ac_enaddr, mac);
+    if_setlladdr(ifp, mac);
+    XYLog("%s: adopted factory MAC %s\n", __FUNCTION__,
+          ether_sprintf(ic->ic_myaddr));
+}
+
 extern "C" int
 mtk_net80211_enable(struct mt76_softc *sc)
 {
@@ -290,8 +361,22 @@ mtk_net80211_enable(struct mt76_softc *sc)
     ic = &sc->sc_ic;
     ifp = IC2IFP(ic);
 
-    if (g_n.running)
-        return 0;
+    if (g_n.running) {
+        /*
+         * Self-heal: a DriverAvailable reset flap can clear IFF_RUNNING
+         * while we still consider ourselves running, and every later
+         * SCAN_REQ then fails with kIOReturnNotReady.  Re-assert.
+         * But only when the datapath hardware is really up: a stale
+         * mirror over a stopped MT76_STATE_RUNNING must fall through to
+         * the full start below (fill_rx drops every frame otherwise).
+         */
+        if (mtk_running()) {
+            ifp->if_flags |= IFF_RUNNING;
+            return 0;
+        }
+        XYLog("mtk-dbg: enable with stale running mirror, full restart\n");
+        g_n.running = 0;
+    }
 
     g_n.stopping = 0;
 #ifdef AIRPORT_WCL
@@ -311,6 +396,12 @@ mtk_net80211_enable(struct mt76_softc *sc)
         return -1;
     }
     g_n.running = 1;
+
+    /*
+     * mtk_hw_start() above waited for the firmware, so mt76_phy.macaddr now
+     * holds the factory address; adopt it before anything is transmitted.
+     */
+    mtk_net80211_sync_mac();
 
     ifq_clr_oactive(&ifp->if_snd);
     ifp->if_flags |= IFF_RUNNING;
@@ -377,10 +468,17 @@ mtk_net80211_disable(struct mt76_softc *sc)
     while ((m = mq_dequeue(&ic->ic_pwrsaveq)) != NULL)
         mbuf_freem(m);
 
-    /* Drop anything still batched for if_input(). */
-    while ((m = ml_dequeue(&g_n.ml)) != NULL)
-        mbuf_freem(m);
-    ml_init(&g_n.ml);
+    /* Drop anything still batched for if_input() (under the lock: the RX
+     * tasklet may still be appending until the pipeline is stopped). */
+    {
+        struct mbuf_list local = MBUF_LIST_INITIALIZER();
+
+        IOSimpleLockLock(g_ml_lock);
+        ml_enlist(&local, &g_n.ml);
+        IOSimpleLockUnlock(g_ml_lock);
+        while ((m = ml_dequeue(&local)) != NULL)
+            mbuf_freem(m);
+    }
 
     /*
      * M5: complete everything still inside the mt76 TX pipeline (DMA /
@@ -417,6 +515,56 @@ mtk_scan_dwell(void *arg)
     ieee80211_next_scan(IC2IFP(ic));
 }
 
+extern "C" int
+mtk_running(void)
+{
+    /*
+     * Mirror AND hardware bit must agree (mtk_hw_running() lives in the
+     * linux-shim TU which sees the mt792x internals): mt7921_mac_fill_rx()
+     * drops every frame while MT76_STATE_RUNNING is clear, so a stale
+     * g_n.running=1 over a stopped datapath looks "up" to the WCL gates
+     * while the scan results never arrive (RX dead).  Report the real
+     * state so the gates' self-heal can restart the datapath.
+     */
+    return g_n.running && !g_n.stopping && mtk_hw_running(g_n.mdev);
+}
+
+/*
+ * Bring the datapath back after a reset/leave tore it down (the WCL
+ * gates call this when their IFF_RUNNING self-heal sees a dead mirror).
+ * A quiesce latch (g_n.stopping) with a live firmware is cleared here;
+ * a cleared MT76_STATE_RUNNING is re-armed through mtk_hw_start().
+ */
+extern "C" int
+mtk_datapath_recover(void)
+{
+    if (!g_n.mdev) {
+        XYLog("mtk-dbg: recover FAILED (no mdev)\n");
+        return -1;
+    }
+    if (mtk_running())
+        return 0;
+    if (!mtk_mcu_is_ready()) {
+        XYLog("mtk-dbg: recover FAILED (mcu not ready)\n");
+        return -1;
+    }
+    if (g_n.stopping) {
+        XYLog("mtk-dbg: clearing stale stopping latch at recover\n");
+        g_n.stopping = 0;
+    }
+    /*
+     * mtk_running() is false here: either the mirror is down or the
+     * hardware bit is (the split state).  Always (re)start.
+     */
+    if (mtk_hw_start(g_n.mdev) != 0) {
+        XYLog("mtk-dbg: recover FAILED (hw_start)\n");
+        return -1;
+    }
+    g_n.running = 1;
+    XYLog("mtk-dbg: datapath recovered at gate\n");
+    return mtk_running() ? 0 : -1;
+}
+
 extern "C" void
 mtk_scan_abort(void)
 {
@@ -438,9 +586,20 @@ mtk_scan_done_notify(void)
     if (!g_n.sc)
         return;
     ic = &g_n.sc->sc_ic;
-    if (ic->ic_state == IEEE80211_S_RUN &&
+    if ((ic->ic_state == IEEE80211_S_RUN ||
+         ic->ic_state == IEEE80211_S_AUTH ||
+         ic->ic_state == IEEE80211_S_ASSOC) &&
         (ic->ic_flags & IEEE80211_F_BGSCAN) == 0) {
-        XYLog("%s: ignoring stale scan completion in RUN\n", __FUNCTION__);
+        XYLog("%s: stale scan completion in state %d (end_scan suppressed)\n",
+              __FUNCTION__, ic->ic_state);
+        /*
+         * The scan FINISHED though: deliver the completion event so the
+         * WCL layer's scanPending/scanCompleted bookkeeping advances.
+         * Suppressing the event too left scanPending latched true and
+         * every later SCAN_REQ answered Busy ("扫描不到网络").
+         */
+        if (ic->ic_event_handler)
+            (*ic->ic_event_handler)(ic, IEEE80211_EVT_SCAN_DONE, NULL);
         return;
     }
     ieee80211_end_scan(IC2IFP(ic));
@@ -473,7 +632,13 @@ mtk_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
          * ic_newassoc for the STA-mode BSS node, so create the WTBL /
          * STA record here, then program the BSS context.
          */
-        mtk_newassoc(ic, ni, 1);
+        mtk_mac_set_timing(g_n.mdev);   /* record 62f7dc5: RUN-entry timing */
+        if (!g_n.sta_added) {
+            /* auth-ready already created the WTBL/STA record; a repeat
+             * STA_REC_UPDATE wedges the MCU queue for seconds. */
+            mtk_newassoc(ic, ni, 1);
+            g_n.sta_added = 1;
+        }
         if (mtk_bss_setup(g_n.mdev, ni->ni_bssid,
                           IEEE80211_AID(ni->ni_associd),
                           ni->ni_intval, ni->ni_dtimperiod,
@@ -484,6 +649,73 @@ mtk_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
                nstate != IEEE80211_S_RUN) {
         mtk_bss_teardown(g_n.mdev);
         mtk_sta_remove(g_n.mdev, ic->ic_bss);
+        g_n.sta_added = 0;
+    }
+
+    if (nstate == IEEE80211_S_AUTH && ic->ic_state != IEEE80211_S_AUTH) {
+        struct ieee80211_node *ni = ic->ic_bss;
+
+        /*
+         * Join: stop any in-flight firmware scan (it hops channels and
+         * deafens RX) and tune to the BSS channel before auth -- the
+         * reference runs mt7921_set_channel() on the S_AUTH entry.
+         */
+        /* Only an in-flight fw scan is aborted here (sync, answered);
+         * the fire-and-forget cancel raced the CHANNEL_SWITCH and the
+         * auth left on the wrong channel (TXS: ACK_TIMEOUT). */
+        int scan_busy = mtk_hw_scan_active(g_n.mdev);
+        mtk_hw_scan_cancel_sync(g_n.mdev);
+        /* Reference parity: never doze across auth; drop any stale
+         * firmware peer left by a previous join attempt (only if one
+         * was actually added -- garbage MCU commands wedge the queue). */
+        mtk_deep_sleep_off(g_n.mdev);
+        if (g_n.sta_added) {
+            mtk_bss_teardown(g_n.mdev);
+            mtk_sta_remove(g_n.mdev, ni);
+            g_n.sta_added = 0;
+        }
+        int auth_tuned = 0;
+        if (ni && ni->ni_chan && ni->ni_chan->ic_freq) {
+            if (mtk_chan_switch(g_n.mdev, ni->ni_chan->ic_freq, 0) != 0)
+                XYLog("%s: tune to %u MHz failed\n", __FUNCTION__,
+                      ni->ni_chan->ic_freq);
+            else
+                auth_tuned = 1;
+        }
+        /*
+         * The firmware repopulates RFCR drop bits (A2/A3_BSSID etc.)
+         * on MCU state transitions -- at auth time the readback was
+         * 0x000cef1a, which eats the AP's unicast auth response.
+         * Rewrite the full open value after the tune (reference parity:
+         * mwx_write(RFCR, baseline|DROP_OTHER_UC)).
+         */
+        mtk_rfcr_open(g_n.mdev);
+        /*
+         * Peer WTBL/STA record BEFORE the auth TX (reference:
+         * mt7921_mac_sta_update(ic_bss, 1, 1) on the S_AUTH entry;
+         * Linux inserts the sta in ieee80211_prep_connection() before
+         * __ieee80211_auth()).  Without it the auth frame rides
+         * global_wcid and the firmware transmits with the unconfigured
+         * WTBL entry 0 -- radiated (TXS) but never ACKed (TXS0
+         * ACK_TIMEOUT on every attempt).
+         */
+        if (ni != NULL && !g_n.sta_added) {
+            mtk_newassoc(ic, ni, 1);
+            g_n.sta_added = 1;
+            /*
+             * Program the firmware BSS_INFO with the AP's BSSID: the
+             * firmware drops beacons whose A3 does not match it (beacon
+             * events went silent right after the tune to the BSS channel
+             * and the WCL join can never complete without them).  The
+             * earlier wedge was NOT this command -- it was the
+             * SET_BSS_CONNECTED half of set_bss_pm (now compiled out,
+             * reference parity).
+             */
+            mtk_bss_prog_bssid(g_n.mdev, ni->ni_bssid,
+                               ni->ni_intval, ni->ni_dtimperiod);
+        }
+        XYLog("mtk-dbg: auth-ready tuned=%d rfcr=0x%08x sta=%d scan_busy=%d\n",
+              auth_tuned, mtk_rfcr_read(g_n.mdev), g_n.sta_added, scan_busy);
     }
 
     if (nstate == IEEE80211_S_SCAN) {
@@ -701,8 +933,56 @@ mtk_net80211_rx(void *mdev, const void *frame, unsigned int len,
     if (rxi.rxi_chan > IEEE80211_CHAN_MAX)
         rxi.rxi_chan = 0;
 
+    /* TEMP(join-debug): during the AUTH/ASSOC window log EVERY arrival
+     * (mgmt or data) with its RX channel -- the radio must be parked on
+     * the BSS channel and hearing the AP.  An auth frame arriving from
+     * anywhere is logged regardless of state.  EAPOL (the 4-way) is
+     * logged at any state. */
+    {
+        static int na, ne;
+        const u_int8_t *w = (const u_int8_t *)frame;
+        int is_auth = (fc0 & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_MGT &&
+                      (fc0 & IEEE80211_FC0_SUBTYPE_MASK) == IEEE80211_FC0_SUBTYPE_AUTH;
+        int is_mgt = (fc0 & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_MGT;
+
+        if (na < 24 && (is_auth || (is_mgt && (ic->ic_state == IEEE80211_S_AUTH ||
+                                               ic->ic_state == IEEE80211_S_ASSOC)))) {
+            na++;
+            XYLog("mtk-dbg-authrx: len=%u fc=%02x/%02x state=%d freq=%u rssi=%d "
+                  "src=%02x:%02x:%02x:%02x:%02x:%02x "
+                  "dst=%02x:%02x:%02x:%02x:%02x:%02x\n",
+                  len, w[0], w[1], ic->ic_state, meta->freq, meta->rssi_dbm,
+                  w[10], w[11], w[12], w[13], w[14], w[15],
+                  w[4], w[5], w[6], w[7], w[8], w[9]);
+        }
+        if (ne < 12 && len > 30) {
+            unsigned int hdrlen = (fc0 & IEEE80211_FC0_TYPE_MASK) ==
+                                  IEEE80211_FC0_TYPE_DATA && (w[0] & 0x80) ? 26 : 24;
+            const u_int8_t *llc = w + hdrlen;
+
+            if (hdrlen + 8 <= len && llc[6] == 0x88 && llc[7] == 0x8e) {
+                ne++;
+                XYLog("mtk-dbg-eapol: len=%u state=%d src=%02x:%02x:%02x:%02x:%02x:%02x "
+                      "type=%u\n", len, ic->ic_state,
+                      w[10], w[11], w[12], w[13], w[14], w[15], llc[8]);
+            }
+        }
+    }
+
     mtk_rxin_note(is_scan_frame, "inputm", len, meta->flags, fc0);
-    ieee80211_inputm(IC2IFP(ic), m, ni, &rxi, &g_n.ml);
+    /*
+     * mt76wm: inputm appends to the batch list from the RX tasklet while
+     * mtk_net80211_disable() drains it from the workloop -- hand inputm
+     * a tasklet-local list and merge under the lock.
+     */
+    {
+        struct mbuf_list local = MBUF_LIST_INITIALIZER();
+
+        ieee80211_inputm(IC2IFP(ic), m, ni, &rxi, &local);
+        IOSimpleLockLock(g_ml_lock);
+        ml_enlist(&g_n.ml, &local);
+        IOSimpleLockUnlock(g_ml_lock);
+    }
     ieee80211_release_node(ic, ni);
 }
 
@@ -711,10 +991,17 @@ mtk_net80211_rx_flush(void *mdev)
 {
     struct mt76_softc *sc = g_n.sc;
     struct _ifnet *ifp;
+    struct mbuf_list local = MBUF_LIST_INITIALIZER();
 
     if (!sc || mdev != g_n.mdev)
         return;
-    if (ml_empty(&g_n.ml))
+
+    /* Swap the batch out under the lock; deliver outside it. */
+    IOSimpleLockLock(g_ml_lock);
+    ml_enlist(&local, &g_n.ml);
+    IOSimpleLockUnlock(g_ml_lock);
+
+    if (ml_empty(&local))
         return;
 
     ifp = IC2IFP(&sc->sc_ic);
@@ -722,12 +1009,12 @@ mtk_net80211_rx_flush(void *mdev)
         /* Not attached to the IOEthernetInterface yet. */
         mbuf_t m;
 
-        while ((m = ml_dequeue(&g_n.ml)) != NULL)
+        while ((m = ml_dequeue(&local)) != NULL)
             mbuf_freem(m);
         return;
     }
-    if_input(ifp, &g_n.ml);
-    ml_init(&g_n.ml);
+    if_input(ifp, &local);
+    ml_init(&local);
 }
 
 /* ================================================================== */
@@ -839,10 +1126,41 @@ mtk_start_task(OSObject *owner, void *arg0, void *arg1, void *arg2, void *arg3)
         }
 
         /* Encapsulate and send data frames. */
-        if (ic->ic_state != IEEE80211_S_RUN ||
-            (ic->ic_xflags & IEEE80211_F_TX_MGMT_ONLY))
+        if (ic->ic_xflags & IEEE80211_F_TX_MGMT_ONLY)
             break;
-        m = ifq_dequeue(&ifp->if_snd);
+        /*
+         * mt76wm: the WPA 4-way rides EAPOL data frames and must flow
+         * *before* the stack enters S_RUN -- completing the handshake is
+         * what gets us there.  So while below S_RUN keep draining if_snd
+         * but only let EAPOL (ethertype 0x888e) survive; anything else is
+         * dropped (the link is still down, the upper layers should not
+         * have queued data yet).
+         */
+        {
+            int eapol_only = (ic->ic_state != IEEE80211_S_RUN);
+            mbuf_t parked = NULL;
+
+            m = ifq_dequeue(&ifp->if_snd);
+            while (m != NULL && eapol_only) {
+                /* ether_header: dst[6] src[6] type[2] -> type at offset 12 */
+                u_int16_t etype = 0;
+
+                if (mbuf_len(m) >= 14)
+                    mbuf_copydata(m, 12, 2, &etype);
+                if (etype == htons(0x888e))
+                    break;      /* EAPOL goes out even before S_RUN */
+                mbuf_setnext(m, parked);
+                parked = m;
+                m = ifq_dequeue(&ifp->if_snd);
+            }
+            while (parked != NULL) {
+                mbuf_t n = mbuf_next(parked);
+
+                mbuf_setnext(parked, NULL);
+                ifq_enqueue(&ifp->if_snd, parked);
+                parked = n;
+            }
+        }
         if (m == NULL)
             break;
         if ((m = ieee80211_encap(ifp, m, &ni)) == NULL)
@@ -880,7 +1198,7 @@ sendit:
                     continue;
                 }
             }
-            if (len > mbuf_len(m0)) {
+            if (len > mbuf_maxlen(m0)) {   /* capacity, not current len! */
                 mbuf_freem(m0);
                 mbuf_freem(m);
                 ieee80211_release_node(ic, ni);
@@ -910,11 +1228,21 @@ sendit:
             flags = 0;
             prio = 0;
             if (type == IEEE80211_FC0_TYPE_MGT) {
-                flags |= MTK_TX_FLAG_MGMT | MTK_TX_FLAG_OFFCHAN;
+                flags |= MTK_TX_FLAG_MGMT;
+                /* OFFCHAN only while actually offchannel (scan dwell).
+                 * Blanket-offchan made auth frames ride the offchannel
+                 * scheduler in home-channel state -- TXS showed
+                 * ACK_TIMEOUT, i.e. the LMAC never properly sent them. */
+                if (mtk_offchannel(g_n.mdev))
+                    flags |= MTK_TX_FLAG_OFFCHAN;
                 if (IEEE80211_IS_MULTICAST(wh->i_addr1))
                     flags |= MTK_TX_FLAG_NO_ACK;
+                /* Reference parity (mwx_tx pid=MT_PACKET_ID_NO_SKB):
+                 * no per-frame TXS -- "a TXS event for every frame only
+                 * loaded the RX ring".  TXS-on may alter the LMAC TX
+                 * policy; the reference deliberately avoids it. */
                 else
-                    flags |= MTK_TX_FLAG_STATUS;
+                    ;
             } else if (type == IEEE80211_FC0_TYPE_DATA) {
                 if (ieee80211_has_qos(wh))
                     prio = ieee80211_get_qos(wh) & 0x7;
@@ -925,6 +1253,19 @@ sendit:
                 ifp->netStat->outputErrors++;
                 continue;
             }
+        }
+
+        /* TEMP(join-debug): first mgmt/data frames handed to mt76 TX. */
+        {
+            static int ntx;
+            const u_int8_t *w = mtod(m, const u_int8_t *);
+
+            if (ntx++ < 12)
+                XYLog("mtk-dbg-tx: len=%u fc=%02x/%02x "
+                      "dst=%02x:%02x:%02x:%02x:%02x:%02x "
+                      "src=%02x:%02x:%02x:%02x:%02x:%02x flags=0x%x\n",
+                      len, w[0], w[1], w[4], w[5], w[6], w[7], w[8], w[9],
+                      w[10], w[11], w[12], w[13], w[14], w[15], flags);
         }
 
         ck.mdev = g_n.mdev;

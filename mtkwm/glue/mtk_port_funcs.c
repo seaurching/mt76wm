@@ -131,6 +131,11 @@ static void mtk_init_chan_tables(void)
         mtk_chans_2g[i].hw_value = i + 1;
         mtk_chans_2g[i].center_freq =
             (u16)ieee80211_channel_to_frequency(i + 1, NL80211_BAND_2GHZ);
+        /* 20 dBm regulatory cap: feeds SET_RATE_TX_POWER (the SKU is
+         * 2 * max_reg_power in half-dBm = 0x28, the value the working
+         * mwx reference hardcodes).  A zero cap transmits muted. */
+        mtk_chans_2g[i].max_power = 20;
+        mtk_chans_2g[i].max_reg_power = 20;
     }
     n = 0;
     for (i = 36; i <= 64 && n < (int)ARRAY_SIZE(mtk_chans_5g); i += 4) {
@@ -154,6 +159,11 @@ static void mtk_init_chan_tables(void)
             (u16)ieee80211_channel_to_frequency(i, NL80211_BAND_5GHZ);
         n++;
     }
+    /* 20 dBm regulatory cap for 5 GHz too (SKU = 0x28, reference parity). */
+    for (i = 0; i < n; i++) {
+        mtk_chans_5g[i].max_power = 20;
+        mtk_chans_5g[i].max_reg_power = 20;
+    }
 }
 
 /* band init helpers (channels + rates per band) */
@@ -161,10 +171,17 @@ static void mtk_init_sband_min(struct mt76_phy *phy, struct mt76_sband *msband,
                                struct ieee80211_rate *rates, int n_rates,
                                enum nl80211_band band)
 {
-    (void)phy;
     msband->sband.bitrates = rates;
     msband->sband.n_bitrates = n_rates;
     msband->sband.band = band;
+    /*
+     * Register the band with the wiphy: mt76_connac_get_phy_mode() (the
+     * bss_setup path at RUN) reads phy->hw->wiphy->bands[band] when no
+     * link_sta is given, and a NULL there dereferences at &sband->ht_cap
+     * (page fault NULL+0x1e -- the RUN-entry crash after assoc).
+     */
+    if (phy && phy->hw && phy->hw->wiphy && band < NUM_NL80211_BANDS)
+        phy->hw->wiphy->bands[band] = &msband->sband;
     switch (band) {
     case NL80211_BAND_2GHZ:
         msband->sband.channels = mtk_chans_2g;
@@ -698,8 +715,22 @@ void mt76_wcid_remove_poll(struct mt76_dev *dev, struct mt76_wcid *wcid);
 
 void mt76_wcid_cleanup(struct mt76_dev *dev, struct mt76_wcid *wcid)
 {
+    struct sk_buff_head list;
     struct sk_buff *skb;
     int i;
+
+    /*
+     * mt76wm: flush the TXS-pending skbs and unlink wcid->list from
+     * dev->wcid_list under the status lock FIRST.  The watchdog's
+     * mt76_tx_status_check() walks that list; the join path rebuilt the
+     * peer record (remove + re-add) while a walk was in flight, the
+     * re-init memset zeroed a still-linked list node, and __list_del
+     * dereferenced NULL+8 (page fault).  mt76_tx_status_skb_get(-1)
+     * flushes every pending entry and drops the wcid from the list.
+     */
+    mt76_tx_status_lock(dev, &list);
+    mt76_tx_status_skb_get(dev, wcid, -1, &list);
+    mt76_tx_status_unlock(dev, &list);
 
     mt76_wcid_remove_poll(dev, wcid);
     while ((skb = skb_dequeue(&wcid->tx_pending)) != NULL)
@@ -1085,11 +1116,25 @@ extern "C" void mtk_mcu_abort(void *mdev, bool final)
 /* ================================================================== */
 /* mt7921/main.c functions (not ported; ieee80211_ops comes later)    */
 /* ================================================================== */
+/* forward decls: vif helpers are defined further down with the M6 bridge */
+static struct mt792x_vif *mtk_mvif(void);
+static int mtk_ensure_vif(struct mt792x_dev *dev);
+static int mtk_vif_register(struct mt792x_dev *dev);
+
 int __mt7921_start(struct mt792x_phy *phy)
 {
     struct mt792x_dev *dev = phy->dev;
     struct mt76_phy *mphy = phy->mt76;
     int err;
+
+    /*
+     * Idempotent: the WCL gates' self-heal (mtk_datapath_recover) can
+     * race the enable path at boot, and a second full MCU start sequence
+     * re-registers the vif/OMAC -- the duplicate DEV_INFO wedges the
+     * firmware (no beacons -> empty Wi-Fi list).
+     */
+    if (test_bit(MT76_STATE_RUNNING, &mphy->state))
+        return 0;
 
     /*
      * mt76wm: wait for the async firmware bring-up before touching the
@@ -1150,6 +1195,42 @@ int __mt7921_start(struct mt792x_phy *phy)
     err = mt76_connac_mcu_set_channel_domain(mphy);
     if (err) {
         XYLog("%s: channel domain failed (%d)\n", __FUNCTION__, err);
+        goto out;
+    }
+
+    /*
+     * TX power SKU (reference init: mt7921_mcu_set_rate_txpower, "init
+     * rate txpower ok").  Without the per-rate power table the firmware
+     * transmits with no power -- the AP hears nothing and every TXS is
+     * ACK_TIMEOUT while RX works fine.
+     */
+    if (!mphy->cap.has_2ghz && !mphy->cap.has_5ghz) {
+        /* capability query left hw_path empty: assume the MT7921 dual-band */
+        mphy->cap.has_2ghz = true;
+        mphy->cap.has_5ghz = true;
+    }
+    err = mt76_connac_mcu_set_rate_txpower(mphy);
+    if (err) {
+        XYLog("%s: rate txpower failed (%d)\n", __FUNCTION__, err);
+        goto out;
+    }
+    XYLog("%s: rate txpower ok\n", __FUNCTION__);
+
+    /*
+     * Register the vif/OMAC at init (reference: mt7921_mcu_uni_add_dev
+     * in the init sequence).  The firmware's own-address filter is built
+     * from this record: without it, the AP's unicast auth response and
+     * its ACK (addressed to our MAC) are dropped as "other UC" and the
+     * join dies at ACK timeout.
+     */
+    err = mtk_ensure_vif(dev);
+    if (err) {
+        XYLog("%s: vif alloc failed (%d)\n", __FUNCTION__, err);
+        goto out;
+    }
+    err = mtk_vif_register(dev);
+    if (err) {
+        XYLog("%s: vif/OMAC register failed (%d)\n", __FUNCTION__, err);
         goto out;
     }
 
@@ -1293,6 +1374,80 @@ int mtk_hw_scan_start(void *mdev, const struct mtk_hw_scan_params *p)
     return 0;
 }
 
+int mtk_offchannel(void *mdev)
+{
+    struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
+
+    return dev ? dev->mt76.phy.offchannel : 0;
+}
+
+void mtk_rfcr_open(void *mdev)
+{
+    struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
+
+    if (!dev)
+        return;
+    /*
+     * TEMP(join-experiment): fully open the RX filter during the join
+     * window.  Even the AP's ACK (RA = our MAC) may be dropped by
+     * DROP_OTHER_UC when the own-address table is empty -- which would
+     * show up as ACK_TIMEOUT on every auth attempt while beacons
+     * (broadcast) keep flowing.  If the auth response appears with
+     * RFCR=0, the own-address programming is the missing piece.
+     */
+    /*
+     * Reference value (MtkMwx.cpp init: sc_rxfilter = DROP_OTHER_UC,
+     * mwx_write(RFCR, sc_rxfilter)).  Writing 0 (all drop-bits clear)
+     * kept the firmware's BSS-mode beacon filter misbehaving -- beacons
+     * only flowed in scan mode.  With the OMAC/own-address registered,
+     * DROP_OTHER_UC no longer eats our unicast (auth responses).
+     */
+    mt76_wr(dev, MT_WF_RFCR(0), MT_WF_RFCR_DROP_OTHER_UC);
+}
+
+unsigned int mtk_rfcr_read(void *mdev)
+{
+    struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
+
+    return dev ? mt76_rr(dev, MT_WF_RFCR(0)) : 0;
+}
+
+/*
+ * Synchronous scan abort for the join path.  Only sent when a firmware
+ * scan is actually in flight: an active scan's CANCEL is answered by the
+ * firmware (no timeout hazard), and waiting for it means the following
+ * CHANNEL_SWITCH cannot be swallowed by a still-aborting scan engine --
+ * the auth frame then leaves on the right channel instead of dying at
+ * ACK timeout.  With no scan in flight nothing is sent at all.
+ */
+void mtk_hw_scan_cancel_sync(void *mdev)
+{
+    struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
+
+    if (!dev || !test_bit(MT76_HW_SCANNING, &dev->mt76.phy.state))
+        return;
+    clear_bit(MT76_HW_SCANNING, &dev->mt76.phy.state);
+    {
+        struct {
+            u8 seq_num;
+            u8 is_ext_channel;
+            u8 rsv[2];
+        } __packed req = { .seq_num = mtk_scan_seq };
+
+        mt76_mcu_send_msg(&dev->mt76, MCU_CE_CMD(CANCEL_HW_SCAN),
+                          &req, sizeof(req), true);
+    }
+    XYLog("mtk-dbg: fw-scan aborted synchronously for join\n");
+}
+
+void mtk_deep_sleep_off(void *mdev)
+{
+    struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
+
+    if (dev)
+        mt76_connac_mcu_set_deep_sleep(&dev->mt76, false);
+}
+
 int mtk_hw_scan_active(void *mdev)
 {
     struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
@@ -1312,8 +1467,16 @@ int mtk_hw_scan_cancel(void *mdev)
     if (!dev)
         return -EINVAL;
     clear_bit(MT76_HW_SCANNING, &dev->mt76.phy.state);
+    /*
+     * Fire-and-forget, exactly like the reference
+     * (mt7921_mcu_hw_scan_cancel sends with NULL response): the
+     * firmware does not answer CANCEL for an already-completed scan,
+     * and a wait=true round trip here burned a 3 s MCU timeout that
+     * wedged the queue and cascaded into a DriverAvailable reset
+     * flap (IFF_RUNNING lost, every SCAN_REQ returned NotReady).
+     */
     return mt76_mcu_send_msg(&dev->mt76, MCU_CE_CMD(CANCEL_HW_SCAN),
-                             &req, sizeof(req), true);
+                             &req, sizeof(req), false);
 }
 
 void mt7921_scan_work(struct work_struct *work)
@@ -1414,6 +1577,13 @@ int mt7921_set_channel(struct mt76_phy *mphy)
     mt792x_mutex_acquire(dev);
     ret = mt7921_mcu_set_chan_info(phy, MCU_EXT_CMD(CHANNEL_SWITCH));
     mt792x_mutex_release(dev);
+    if (ret == 0)
+        /* Reference parity (MtkMwx.cpp mt7921_set_channel): program the
+         * LMAC timing right after the tune -- MT_TMAC_CDTR/ODTR are the
+         * CCK/OFDM TX data-timeout (ACK wait) values and ICR0 carries
+         * SIFS/slot.  Unprogrammed they can make the LMAC declare
+         * ACK_TIMEOUT on frames the AP did acknowledge. */
+        mt792x_mac_set_timeing(&dev->phy);
     return ret;
 }
 
@@ -1458,8 +1628,7 @@ void mtk_rxfilter_set(void *mdev)
      * and its fif bitmap (FILTER_OTHER_BSS = BIT(6)) collides with
      * MT_WF_RFCR_DROP_BCAST (BIT(6)) -- a beacon is a broadcast frame.
      */
-    mt76_clear(dev, MT_WF_RFCR(0), MT_WF_RFCR_DROP_OTHER_BEACON);
-    mt76_set(dev, MT_WF_RFCR(0), MT_WF_RFCR_DROP_OTHER_UC);
+    mtk_rfcr_open(dev);
     XYLog("mtk-dbg: rxfilter RFCR(0)=0x%08x (standing, register-only)\n",
           mt76_rr(dev, MT_WF_RFCR(0)));
 }
@@ -1719,6 +1888,7 @@ void mt7921_mac_sta_remove(struct mt76_dev *mdev, struct ieee80211_vif *vif,
 struct mtk_sta_ctx {
     void                    *ni;    /* net80211 node pointer (lookup)   */
     bool                     used;
+    bool                     assoced; /* STA_REC_UPDATE(ASSOC) sent      */
     struct ieee80211_sta    *sta;   /* drv_priv = mt792x_sta            */
 };
 
@@ -1728,6 +1898,7 @@ static struct {
     struct ieee80211_key_conf kconf[MTK_KEY_SLOTS];
     u8                       kvalid[MTK_KEY_SLOTS];
     bool                     bss_up;
+    bool                     sta_assoced;  /* BSS sta record -> ASSOC   */
     struct mtk_sta_ctx       sta[MTK_MAX_STA];
 } g_m6;
 
@@ -1798,6 +1969,13 @@ static int mtk_ensure_vif(struct mt792x_dev *dev)
     vif->bss_conf.dtim_period = 1;
     vif->bss_conf.qos = 1;          /* WMM: the firmware records exist  */
     vif->bss_conf.he_support = 0;
+    /* Reference parity (MtkMwx.cpp sta_rec_phy): the STA record's
+     * basic_rate is pinned to 6/12/24M OFDM (0x0150).  A zero bitmap
+     * gives the firmware no basic rate for its control responses.
+     * Bit0 (CCK 1M) is added so mt76_connac2_mac_tx_rate_val()'s
+     * ffs(basic_rates) picks CCK 1M for the fixed-rate mgmt TX on
+     * 2.4 GHz (reference mt7921_mac_tx_rate_val sends auth at 1M). */
+    vif->bss_conf.basic_rates = 0x0151;
     vif->deflink_conf = &vif->bss_conf;
     vif->link_conf[0] = &vif->bss_conf;
     vif->cfg.assoc = false;
@@ -1830,6 +2008,47 @@ static int mtk_ensure_vif(struct mt792x_dev *dev)
     g_m6.vif = vif;
     g_m6.valid = true;
     return 0;
+}
+
+/*
+ * Register the vif/OMAC with the firmware (reference: mt7921_mcu_uni_add_dev
+ * in the init sequence, kept for the driver lifetime).  The record carries
+ * our MAC: the firmware's own-address filter is built from it, and without
+ * it the AP's unicast auth response is dropped as "other UC".
+ * Caller holds the device mutex.
+ */
+static int mtk_vif_register(struct mt792x_dev *dev)
+{
+    struct mt792x_vif *mvif = mtk_mvif();
+    static int registered;
+    int ret;
+
+    /* Once per driver lifetime (reference parity): a duplicate
+     * DEV_INFO_UPDATE wedges this firmware. */
+    if (registered)
+        return 0;
+
+    ret = mt76_connac_mcu_uni_add_dev(&dev->mphy, &g_m6.vif->bss_conf,
+                                      &mvif->bss_conf.mt76,
+                                      &mvif->sta.deflink.wcid, true);
+    if (ret == 0) {
+        registered = 1;
+        XYLog("%s: vif/OMAC registered mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+              __FUNCTION__, g_m6.vif->bss_conf.addr[0], g_m6.vif->bss_conf.addr[1],
+              g_m6.vif->bss_conf.addr[2], g_m6.vif->bss_conf.addr[3],
+              g_m6.vif->bss_conf.addr[4], g_m6.vif->bss_conf.addr[5]);
+        /*
+         * Reference init parity (MtkMwx.cpp STA branch): explicitly
+         * disable sniffer mode.  With the SNIFFER state left undefined
+         * the firmware drops BSS-mode beacons (EVT_BEACON went silent
+         * right after the tune to the BSS channel) and the WCL join can
+         * never complete.
+         */
+        ret = mt7921_mcu_set_sniffer(dev, g_m6.vif, false);
+        XYLog("mtk-dbg: set_sniffer(0) -> %d\n", ret);
+        ret = 0;
+    }
+    return ret;
 }
 
 /* ---- station (WTBL) lifecycle ---- */
@@ -1918,15 +2137,19 @@ mtk_sta_add(void *mdev, void *ni, const unsigned char *mac,
     ctx->ni = ni;
     ctx->sta = sta;
     ctx->used = true;
+    ctx->assoced = false;
 
     mt792x_mutex_acquire(dev);
     mt7921_mac_wtbl_update(dev, idx, MT_WTBL_UPDATE_ADM_COUNT_CLEAR);
     /* create the STA record, then mark it associated */
     ret = mt7921_mcu_sta_update(dev, sta, g_m6.vif, true,
                                 MT76_STA_INFO_STATE_NONE);
-    if (!ret)
+    if (!ret) {
         ret = mt7921_mcu_sta_update(dev, sta, g_m6.vif, true,
                                     MT76_STA_INFO_STATE_ASSOC);
+        if (!ret)
+            ctx->assoced = true;   /* done here; bss_setup must not repeat */
+    }
     mt792x_mutex_release(dev);
 
     if (ret) {
@@ -1980,12 +2203,57 @@ mtk_sta_remove(void *mdev, void *ni)
     mt76_wcid_cleanup(&dev->mt76, wcid);
 
     ctx->used = false;
+    ctx->assoced = false;
     ctx->ni = NULL;
     kfree(ctx->sta);
     ctx->sta = NULL;
 }
 
 /* ---- BSS (RUN state) ---- */
+
+extern "C" int
+mtk_bss_prog_bssid(void *mdev, const unsigned char *bssid,
+                   unsigned int bintval, unsigned int dtim)
+{
+    struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
+    struct mt792x_vif *mvif;
+    int ret;
+
+    if (!dev || !bssid)
+        return -EINVAL;
+    ret = mtk_ensure_vif(dev);
+    if (ret)
+        return ret;
+    mvif = mtk_mvif();
+    if (!mvif || !g_m6.vif)
+        return -EINVAL;
+    memcpy(g_m6.vif->bss_conf.bssid, bssid, ETH_ALEN);
+    /*
+     * The BSS_INFO basic TLV carries beacon_int/dtim -- the firmware's
+     * beacon RX timing keys off them.  They must be valid HERE (the AUTH
+     * entry), not only later in mtk_bss_setup: with beacon_int=0 the
+     * firmware silently drops every beacon and the WCL join can never
+     * complete (firstBeaconNotified never latches).
+     */
+    g_m6.vif->bss_conf.beacon_int = (u16)(bintval ? bintval : 100);
+    g_m6.vif->bss_conf.dtim_period = (u8)(dtim ? dtim : 1);
+    mt792x_mutex_acquire(dev);
+    /*
+     * BSS_INFO_UPDATE only (the basic TLV carries the BSSID) -- never
+     * DEV_INFO: a duplicate uni_add_dev wedges this firmware.  Programmed
+     * at the AUTH entry, well before the RUN transition where an extra
+     * BSS_INFO registration previously timed out the MCU.  Without this
+     * the firmware RX filter matches beacons against a zero BSSID, drops
+     * every beacon from the AP the moment we leave scan mode, and the WCL
+     * join can never complete (firstBeaconNotified never latches).
+     */
+    ret = mt76_connac_mcu_uni_add_bss(&dev->mphy, g_m6.vif,
+                                      &mvif->sta.deflink.wcid, true, NULL);
+    mt792x_mutex_release(dev);
+    XYLog("mtk-dbg: bss prog bssid %02x:%02x:%02x:%02x:%02x:%02x rv=%d\n",
+          bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5], ret);
+    return ret;
+}
 
 extern "C" int
 mtk_bss_setup(void *mdev, const unsigned char *bssid, unsigned int aid,
@@ -2018,26 +2286,28 @@ mtk_bss_setup(void *mdev, const unsigned char *bssid, unsigned int aid,
     g_m6.vif->bss_conf.basic_rates = basic_rates ? basic_rates : 0x15f;
 
     mt792x_mutex_acquire(dev);
-    /* DEV + BSS records (upstream add_interface / sta_event(ASSOC)) */
-    ret = mt76_connac_mcu_uni_add_dev(&dev->mphy, &g_m6.vif->bss_conf,
-                                      &mvif->bss_conf.mt76,
-                                      &mvif->sta.deflink.wcid, true);
-    if (ret)
-        goto out;
-    ret = mt76_connac_mcu_uni_add_bss(&dev->mphy, g_m6.vif,
-                                      &mvif->sta.deflink.wcid, true,
-                                      mvif->bss_conf.mt76.ctx);
-    if (ret)
-        goto out;
-    /* BSS power-save / connected state (task: mt7921_mcu_set_bss_pm) */
+    /*
+     * Reference RUN parity (MtkMwx.cpp: set_associated_bss + peer only).
+     * The BSS context comes from the init-time uni_add_dev; do NOT send
+     * uni_add_bss here -- the extra UNI BSS_INFO registration wedges this
+     * firmware at the RUN transition (MCU timeout -> suppressed reset ->
+     * the AP's EAPOL M1 never reaches us).
+     */
+    /* BSS power-save / connected state (mt7921_mcu_set_bss_pm ==
+     * reference mt7921_mcu_set_associated_bss: SET_BSS_ABORT +
+     * SET_BSS_CONNECTED). */
     ret = mt7921_mcu_set_bss_pm(dev, g_m6.vif, true);
     if (ret)
         goto out;
-    /* BSS station record (bss_info_changed(BSS_CHANGED_ASSOC)) */
-    ret = mt7921_mcu_sta_update(dev, NULL, g_m6.vif, true,
-                                MT76_STA_INFO_STATE_ASSOC);
-    if (ret)
-        goto out;
+    /*
+     * BSS station record: reference parity (MtkMwx.cpp RUN case =
+     * set_associated_bss + set_associated_peer ONLY).  There is no
+     * sta_update(NULL)-style BSS-record update in the reference and
+     * ours carried EXTRA_INFO_NEW every time (newly is hardwired true
+     * for the sta==NULL path), which this firmware answers with a
+     * 3 s MCU timeout that stalls every command behind it (key
+     * installs first).  Skip it.
+     */
     /* per-node records reach the ASSOC state (mt7921_mac_sta_event) */
     for (i = 0; i < MTK_MAX_STA; i++) {
         if (!g_m6.sta[i].used)
@@ -2072,17 +2342,16 @@ mtk_bss_teardown(void *mdev)
     mt7921_mcu_set_bss_pm(dev, g_m6.vif, false);
     mt7921_mcu_sta_update(dev, NULL, g_m6.vif, false,
                           MT76_STA_INFO_STATE_NONE);
-    mt76_connac_mcu_uni_add_bss(&dev->mphy, g_m6.vif,
-                                &mvif->sta.deflink.wcid, false,
-                                mvif->bss_conf.mt76.ctx);
-    mt76_connac_mcu_uni_add_dev(&dev->mphy, &g_m6.vif->bss_conf,
-                                &mvif->bss_conf.mt76,
-                                &mvif->sta.deflink.wcid, false);
+    /* The vif/OMAC record is registered once at init and kept for the
+     * driver lifetime (reference parity): removing it here left the
+     * firmware with no own-address filter, so the next join's unicast
+     * auth response was dropped as "other UC". */
     mt792x_mutex_release(dev);
 
     g_m6.vif->cfg.assoc = false;
     g_m6.vif->bss_conf.assoc = false;
     g_m6.bss_up = false;
+    g_m6.sta_assoced = false;
 }
 
 /* ---- keys ---- */
@@ -2296,6 +2565,22 @@ mtk_set_slot(void *mdev, int short_slot)
 }
 
 /*
+ * LMAC timing (ACK wait / SIFS / slot) for the join path: the reference
+ * runs mt7921_mac_set_timing at the RUN entry (record 62f7dc5) as well as
+ * after every channel switch.  Do NOT call it from updateslot at runtime:
+ * the ARB TX/RX-disable toggle around the register writes drops in-flight
+ * frames ("removing runtime arbiter toggle", same record).
+ */
+extern "C" void mtk_mac_set_timing(void *mdev)
+{
+    struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
+
+    if (!dev)
+        return;
+    mt792x_mac_set_timeing(&dev->phy);
+}
+
+/*
  * mt76_wcid_key_setup() (Linux mt76/mac80211.c): seed the wcid RX PN
  * replay state from the installed key.  The net80211 side keeps its own
  * replay counters (ieee80211_input_hwdecrypt), so only the CCMP marker
@@ -2433,6 +2718,16 @@ extern "C" void mtk_hw_stop(void *mdev)
     mt792x_mutex_release(dev);
 }
 
+/* True when the datapath hardware is actually up (MT76_STATE_RUNNING).
+ * fill_rx drops every frame when this is clear -- the net80211 mirror
+ * alone is not trustworthy after a suppressed reset. */
+extern "C" int mtk_hw_running(void *mdev)
+{
+    struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
+
+    return dev && test_bit(MT76_STATE_RUNNING, &dev->mt76.phy.state);
+}
+
 extern "C" int mtk_get_mac(void *mdev, unsigned char *out)
 {
     const struct mtk_dev_ops *ops = mtk_ops_for_mdev(mdev);
@@ -2444,6 +2739,23 @@ extern "C" int mtk_get_mac(void *mdev, unsigned char *out)
         return -1;
     memcpy(out, dev->mt76.phy.macaddr, ETH_ALEN);
     return 0;
+}
+
+/*
+ * Override the station MAC.  The net80211 fallback address (and later
+ * macOS's private address per network) must live in mt76_phy.macaddr too:
+ * the vif/OMAC record registered with the firmware is built from it, and
+ * the firmware's own-address filter drops unicast frames addressed to
+ * anything else ("other UC") -- the AP's auth response would never reach
+ * net80211.
+ */
+extern "C" void mtk_set_mac(void *mdev, const unsigned char *mac)
+{
+    struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
+
+    if (!dev || !mac)
+        return;
+    memcpy(dev->mt76.phy.macaddr, mac, ETH_ALEN);
 }
 
 /* ================================================================== */
@@ -2573,7 +2885,13 @@ mtk_tx_frame(void *mdev, const struct mtk_tx_cookie *ck,
      * drained even while phy->offchannel is set (scan dwell).
      */
     if (flags & MTK_TX_FLAG_MGMT) {
-        skb_set_queue_mapping(skb, MT_TXQ_BE);
+        /* WMM VO: reference parity (mwx_tx: "management and control
+         * frames stay on VO, like mac80211").  With MT_DRV_HW_MGMT_TXQ
+         * removed, mgmt rides this AC queue instead of PSD/ALTX0 --
+         * the ALTX0 route needs a vif/own_mac context that pre-assoc
+         * auth frames lack, and the LMAC emitted ACK_TIMEOUT TXS (the
+         * frame reached the air broken). */
+        skb_set_queue_mapping(skb, MT_TXQ_VO);
     } else {
         skb_set_queue_mapping(skb, mtk_tid_to_ac[prio & 0x7]);
         if (dev->mt76.phy.offchannel)

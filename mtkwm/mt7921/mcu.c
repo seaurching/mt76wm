@@ -1000,6 +1000,12 @@ int mt7921_mcu_set_chan_info(struct mt792x_phy *phy, int cmd)
 		.band_idx = phy != &dev->phy,
 	};
 
+	/* Reference parity (MtkMwx.cpp:6327): echo the operating width and
+	 * center channel in the AP fields too - the firmware uses them on
+	 * the CHANNEL_SWITCH path. */
+	req.ap_bw = req.bw;
+	req.ap_center_ch = req.center_ch;
+
 	if (chandef->chan->band == NL80211_BAND_6GHZ)
 		req.channel_band = 2;
 	else
@@ -1024,6 +1030,21 @@ int mt7921_mcu_set_chan_info(struct mt792x_phy *phy, int cmd)
 		int freq2 = chandef->center_freq2;
 
 		req.center_ch2 = ieee80211_frequency_to_channel(freq2);
+	}
+
+	{   /* TEMP(join-debug): dump the tune request -- a wrong control/center
+	 * channel leaves the radio off the BSS channel and the auth dies at
+	 * ACK timeout. */
+		static int n;
+
+		if (n++ < 8 && cmd == MCU_EXT_CMD(CHANNEL_SWITCH))
+			XYLog("mtk-dbg-chan: SWITCH ctrl=%u center=%u bw=%u "
+			      "tx_streams=%u rx_streams=%u reason=%u band=%u "
+			      "chband=%u ap_bw=%u ap_center=%u\n",
+			      req.control_ch, req.center_ch, req.bw,
+			      req.tx_streams_num, req.rx_streams,
+			      req.switch_reason, req.band_idx, req.channel_band,
+			      req.ap_bw, req.ap_center_ch);
 	}
 
 	return mt76_mcu_send_msg(&dev->mt76, cmd, &req, sizeof(req), true);
@@ -1125,38 +1146,26 @@ int
 mt7921_mcu_set_bss_pm(struct mt792x_dev *dev, struct ieee80211_vif *vif,
 		      bool enable)
 {
-	struct mt792x_vif *mvif = (struct mt792x_vif *)vif->drv_priv;
-	struct {
-		u8 bss_idx;
-		u8 dtim_period;
-		__le16 aid;
-		__le16 bcn_interval;
-		__le16 atim_window;
-		u8 uapsd;
-		u8 bmc_delivered_ac;
-		u8 bmc_triggered_ac;
-		u8 pad;
-	} req = {
-		.bss_idx = mvif->bss_conf.mt76.idx,
-		.aid = cpu_to_le16(vif->cfg.aid),
-		.dtim_period = vif->bss_conf.dtim_period,
-		.bcn_interval = cpu_to_le16(vif->bss_conf.beacon_int),
-	};
 	struct {
 		u8 bss_idx;
 		u8 pad[3];
 	} req_hdr = {
-		.bss_idx = mvif->bss_conf.mt76.idx,
+		/*
+		 * mt76wm: reference parity (MtkMwx.cpp mt7921_mcu_set_bss_pm):
+		 * send ONLY SET_BSS_ABORT, with bss_idx hardcoded 0 -- the
+		 * reference has the SET_BSS_CONNECTED half compiled out
+		 * (#ifdef NOTYET) and its req_hdr also uses 0 ("mvif->mt76.idx
+		 * XXX").  Our SET_BSS_CONNECTED got no firmware answer and
+		 * stalled the MCU queue 3 s at every RUN transition.
+		 */
+		.bss_idx = 0,
 	};
 	int err;
 
+	(void)vif; (void)enable;
 	err = mt76_mcu_send_msg(&dev->mt76, MCU_CE_CMD(SET_BSS_ABORT),
 				&req_hdr, sizeof(req_hdr), false);
-	if (err < 0 || !enable)
-		return err;
-
-	return mt76_mcu_send_msg(&dev->mt76, MCU_CE_CMD(SET_BSS_CONNECTED),
-				 &req, sizeof(req), false);
+	return err;
 }
 
 int mt7921_mcu_sta_update(struct mt792x_dev *dev, struct ieee80211_sta *sta,
@@ -1164,7 +1173,6 @@ int mt7921_mcu_sta_update(struct mt792x_dev *dev, struct ieee80211_sta *sta,
 			  enum mt76_sta_info_state state)
 {
 	struct mt792x_vif *mvif = (struct mt792x_vif *)vif->drv_priv;
-	int rssi = -ewma_rssi_read(&mvif->bss_conf.rssi);
 	struct mt76_sta_cmd_info info = {
 		.sta = sta,
 		.vif = vif,
@@ -1172,7 +1180,14 @@ int mt7921_mcu_sta_update(struct mt792x_dev *dev, struct ieee80211_sta *sta,
 		.cmd = MCU_UNI_CMD(STA_REC_UPDATE),
 		.state = (u8)(state),
 		.offload_fw = true,
-		.rcpi = (u8)(to_rcpi(rssi)),
+		/*
+		 * Keep the RCPI at 0xdc (matching Linux mt76, reference
+		 * record 62f7dc5).  The MT7921 firmware tracks RCPI
+		 * autonomously in its WTBL; overriding it with low dynamic
+		 * values during peer setup causes firmware rate collapse,
+		 * tx starvation and link drops.
+		 */
+		.rcpi = 0xdc,
 	};
 	struct mt792x_sta *msta;
 

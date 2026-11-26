@@ -98,68 +98,96 @@ void
 ieee80211_eapol_key_input(struct ieee80211com *ic, mbuf_t m,
                           struct ieee80211_node *ni)
 {
-    XYLog("%s\n", __FUNCTION__);
     struct _ifnet *ifp = &ic->ic_if;
     struct ether_header *eh;
     struct ieee80211_eapol_key *key;
     u_int16_t info, desc;
     int totlen, bodylen, paylen;
-    
+
     ifp->if_ibytes += mbuf_pkthdr_len(m);
-    
+
     eh = mtod(m, struct ether_header *);
     if (IEEE80211_IS_MULTICAST(eh->ether_dhost)) {
         ifp->if_imcasts++;
         goto done;
     }
     mbuf_adj(m, sizeof(*eh));
-    
-    if (mbuf_pkthdr_len(m) < sizeof(*key))
+
+    if (mbuf_pkthdr_len(m) < sizeof(*key)) {
+        { static int n; if (n++ < 8) XYLog("mtk-dbg-pae: DROP-short len=%d\n",
+            (int)mbuf_pkthdr_len(m)); }
         goto done;
+    }
     if (mbuf_len(m) < sizeof(*key) &&
         (mbuf_pullup(&m, sizeof(*key)))) {
         ic->ic_stats.is_rx_nombuf++;
         goto done;
     }
     key = mtod(m, struct ieee80211_eapol_key *);
-    
-    if (key->type != EAPOL_KEY)
+
+    if (key->type != EAPOL_KEY) {
+        { static int n; if (n++ < 8) XYLog("mtk-dbg-pae: DROP-type %u\n",
+            key->type); }
         goto done;
+    }
     ic->ic_stats.is_rx_eapol_key++;
-    
+
     if ((ni->ni_rsnprotos == IEEE80211_PROTO_RSN &&
          key->desc != EAPOL_KEY_DESC_IEEE80211) ||
         (ni->ni_rsnprotos == IEEE80211_PROTO_WPA &&
-         key->desc != EAPOL_KEY_DESC_WPA))
+         key->desc != EAPOL_KEY_DESC_WPA)) {
+        { static int n; if (n++ < 8) XYLog("mtk-dbg-pae: DROP-desc protos=0x%x desc=%u\n",
+            ni->ni_rsnprotos, key->desc); }
         goto done;
-    
+    }
+
     /* check packet body length */
     bodylen = BE_READ_2(key->len);
     totlen = 4 + bodylen;
-    if (mbuf_pkthdr_len(m) < totlen || totlen > MCLBYTES)
+    if (mbuf_pkthdr_len(m) < totlen || totlen > MCLBYTES) {
+        { static int n; if (n++ < 8) XYLog("mtk-dbg-pae: DROP-bodylen %d totlen=%d\n",
+            bodylen, totlen); }
         goto done;
-    
+    }
+
     /* check key data length */
     paylen = BE_READ_2(key->paylen);
-    if (paylen > totlen - sizeof(*key))
+    if (paylen > totlen - sizeof(*key)) {
+        { static int n; if (n++ < 8) XYLog("mtk-dbg-pae: DROP-paylen %d\n", paylen); }
         goto done;
-    
+    }
+
     info = BE_READ_2(key->info);
-    
+
     /* discard EAPOL-Key frames with an unknown descriptor version */
     desc = info & EAPOL_KEY_VERSION_MASK;
-    if (desc < EAPOL_KEY_DESC_V1 || desc > EAPOL_KEY_DESC_V3)
+    if (desc < EAPOL_KEY_DESC_V1 || desc > EAPOL_KEY_DESC_V3) {
+        { static int n; if (n++ < 8) XYLog("mtk-dbg-pae: DROP-version %u\n", desc); }
         goto done;
-    
+    }
+
     if (ieee80211_is_sha256_akm((enum ieee80211_akm)ni->ni_rsnakms)) {
-        if (desc != EAPOL_KEY_DESC_V3)
+        if (desc != EAPOL_KEY_DESC_V3) {
+            { static int n; if (n++ < 8) XYLog("mtk-dbg-pae: DROP-v3miss desc=%u\n", desc); }
             goto done;
+        }
     } else if (ni->ni_rsncipher == IEEE80211_CIPHER_CCMP ||
                ni->ni_rsngroupcipher == IEEE80211_CIPHER_CCMP) {
-        if (desc != EAPOL_KEY_DESC_V2)
+        if (desc != EAPOL_KEY_DESC_V2) {
+            { static int n; if (n++ < 8) XYLog("mtk-dbg-pae: DROP-v2miss desc=%u cipher=%u/%u\n",
+                desc, ni->ni_rsncipher, ni->ni_rsngroupcipher); }
             goto done;
+        }
     }
-    
+
+    {   /* TEMP(join-debug): frame accepted, show the key info word. */
+        static int n;
+
+        if (n++ < 16)
+            XYLog("mtk-dbg-pae: key desc=%u info=0x%04x paylen=%d state=%d\n",
+                  key->desc, info, paylen, ni->ni_rsn_supp_state);
+    }
+
     /* make sure the key data field is contiguous */
     if (mbuf_len(m) < totlen && mbuf_pullup(&m, totlen)) {
         ic->ic_stats.is_rx_nombuf++;
@@ -210,12 +238,11 @@ void
 ieee80211_recv_4way_msg1(struct ieee80211com *ic,
                          struct ieee80211_eapol_key *key, struct ieee80211_node *ni)
 {
-    XYLog("%s\n", __FUNCTION__);
     struct ieee80211_ptk tptk;
     struct ieee80211_pmk *pmk;
     const u_int8_t *frm, *efrm;
     const u_int8_t *pmkid;
-    
+
 #ifndef IEEE80211_STA_ONLY
     if (ic->ic_opmode != IEEE80211_M_STA &&
         ic->ic_opmode != IEEE80211_M_IBSS)
@@ -226,13 +253,14 @@ ieee80211_recv_4way_msg1(struct ieee80211com *ic,
      * APs will rekey the PTK by sending Msg1/4 after some time.
      */
     if (ni->ni_rsn_supp_state == RSNA_SUPP_INITIALIZE) {
-        DPRINTF(("unexpected in state: %d\n", ni->ni_rsn_supp_state));
+        XYLog("mtk-dbg-pae: msg1 DROP supp_state=INITIALIZE\n");
         return;
     }
     /* enforce monotonicity of key request replay counter */
     if (ni->ni_replaycnt_ok &&
         BE_READ_8(key->replaycnt) <= ni->ni_replaycnt) {
         ic->ic_stats.is_rx_eapol_replay++;
+        XYLog("mtk-dbg-pae: msg1 DROP replay\n");
         return;
     }
     
@@ -260,8 +288,10 @@ ieee80211_recv_4way_msg1(struct ieee80211com *ic,
         frm += 2 + frm[1];
     }
     /* check that the PMKID KDE is valid (if present) */
-    if (pmkid != NULL && pmkid[1] != 4 + 16)
+    if (pmkid != NULL && pmkid[1] != 4 + 16) {
+        XYLog("mtk-dbg-pae: msg1 DROP bad PMKID KDE len=%u\n", pmkid[1]);
         return;
+    }
     
     if (ieee80211_is_8021x_akm((enum ieee80211_akm)ni->ni_rsnakms)) {
         /* retrieve the PMK for this (AP,PMKID) */
@@ -282,11 +312,11 @@ ieee80211_recv_4way_msg1(struct ieee80211com *ic,
      * message 2, which almost always means a different key (Wi-Fi password).
      */
     if (ni->ni_rsn_supp_state == RSNA_SUPP_PTKNEGOTIATING)
-        XYLog("4-way msg 1/4 repeated by %s: it rejected our msg 2/4 (wrong key or Wi-Fi password?), key check %02x\n",
+        XYLog("mtk-dbg-pae: 4-way msg 1/4 repeated by %s: it rejected our msg 2/4 (wrong key or Wi-Fi password?), key check %02x\n",
               ether_sprintf(ni->ni_macaddr),
               ieee80211_key_check(ni->ni_pmk, IEEE80211_PMK_LEN));
     else
-        XYLog("4-way msg 1/4 from %s, key check %02x\n",
+        XYLog("mtk-dbg-pae: 4-way msg 1/4 from %s, key check %02x\n",
               ether_sprintf(ni->ni_macaddr),
               ieee80211_key_check(ni->ni_pmk, IEEE80211_PMK_LEN));
     
@@ -309,7 +339,11 @@ ieee80211_recv_4way_msg1(struct ieee80211com *ic,
               ether_sprintf(ni->ni_macaddr));
     
     /* send message 2 to authenticator using TPTK */
-    (void)ieee80211_send_4way_msg2(ic, ni, key->replaycnt, &tptk);
+    {
+        int s2 = ieee80211_send_4way_msg2(ic, ni, key->replaycnt, &tptk);
+
+        XYLog("mtk-dbg-pae: 4-way msg 2/4 send rv=%d\n", s2);
+    }
 }
 
 #ifndef IEEE80211_STA_ONLY
@@ -454,7 +488,7 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
     /* if encrypted, decrypt Key Data field using KEK */
     if ((info & EAPOL_KEY_ENCRYPTED) &&
         ieee80211_eapol_key_decrypt(key, ni->ni_ptk.kek) != 0) {
-        DPRINTF(("decryption failed\n"));
+        XYLog("mtk-dbg-pae: msg3 key data decrypt failed\n");
         return;
     }
     
@@ -510,7 +544,8 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
     }
     /* first WPA/RSN IE is mandatory */
     if (rsnie1 == NULL) {
-        DPRINTF(("missing RSN IE\n"));
+        XYLog("mtk-dbg-pae: msg3 missing RSN IE (gtk=%d igtk=%d)\n",
+              gtk != NULL, igtk != NULL);
         return;
     }
     /* key data must be encrypted if GTK is included */
@@ -573,6 +608,27 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
     /* send message 4 to authenticator */
     if (ieee80211_send_4way_msg4(ic, ni) != 0)
         return;    /* ..authenticator will retry */
+
+    /*
+     * mt76wm: the handshake is complete once M4 is on the air -- mark
+     * the port valid and bring the link up BEFORE the key installs.
+     * The MCU key commands can stall 3 s each on this firmware (the
+     * repeat STA_REC_UPDATE gets no answer) and airportd gives the join
+     * only 1.6 s; the keys below are best-effort afterwards.
+     */
+    if (info & EAPOL_KEY_SECURE) {
+        ni->ni_flags |= IEEE80211_NODE_TXRXPROT;
+        ni->ni_port_valid = 1;
+        XYLog("mtk-dbg-pae: msg3: M4 sent, port valid + link up (keys pending)\n");
+        ieee80211_set_link_state(ic, LINK_STATE_UP);
+        if (ni->ni_flags & IEEE80211_NODE_PMK) {
+            ieee80211_pmksa_add(ic, (enum ieee80211_akm)ni->ni_rsnakms,
+                ni->ni_bssid, ni->ni_pmk, IEEE80211_PMK_INFINITE);
+        }
+        ni->ni_assoc_fail = 0;
+        if (ic->ic_opmode == IEEE80211_M_STA)
+            ic->ic_rsngroupcipher = ni->ni_rsngroupcipher;
+    }
     
     /*
      * Only install a new pairwise key if we are still expecting a new key,
@@ -592,8 +648,10 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
         /* check that key length matches that of pairwise cipher */
         keylen = ieee80211_cipher_keylen(ni->ni_rsncipher);
         if (BE_READ_2(key->keylen) != keylen) {
-            reason = IEEE80211_REASON_AUTH_LEAVE;
-            goto deauth;
+            /* link is already up -- just skip the key install */
+            XYLog("mtk-dbg-pae: msg3 keylen mismatch: got %u want %u "
+                  "(skipping PTK)\n", BE_READ_2(key->keylen), keylen);
+            goto skip_ptk;
         }
         prsc = (gtk == NULL) ? LE_READ_6(key->rsc) : 0;
         
@@ -612,8 +670,13 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
                 deferlink = 1;
                 break;
             default:
-                reason = IEEE80211_REASON_AUTH_LEAVE;
-                goto deauth;
+                /*
+                 * mt76wm: same tolerance as the GTK case below -- a wedged
+                 * MCU key command must not abort an already-completed
+                 * 4-way.  Log and continue to port-valid/link-up.
+                 */
+                XYLog("mtk-dbg-pae: PTK install failed, continuing\n");
+                break;
         }
         ni->ni_flags &= ~IEEE80211_NODE_RSN_NEW_PTK;
         ni->ni_flags &= ~IEEE80211_NODE_TXRXPROT;
@@ -621,15 +684,18 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
     } else if (ni->ni_rsncipher != IEEE80211_CIPHER_USEGROUP)
         XYLog("%s: unexpected pairwise key update received from %s\n",
               ic->ic_if.if_xname, ether_sprintf(ni->ni_macaddr));
-    
+    skip_ptk:
+
     if (gtk != NULL) {
         u_int8_t kid;
-        
+
         /* check that key length matches that of group cipher */
         keylen = ieee80211_cipher_keylen(ni->ni_rsngroupcipher);
         if (gtk[1] != 6 + keylen) {
-            reason = IEEE80211_REASON_AUTH_LEAVE;
-            goto deauth;
+            /* link is already up -- just skip the GTK install */
+            XYLog("mtk-dbg-pae: msg3 GTK kde len mismatch: got %u want %u "
+                  "(skipping GTK)\n", gtk[1], 6 + keylen);
+            goto skip_gtk;
         }
         /* map GTK to 802.11 key */
         kid = gtk[6] & 3;
@@ -654,11 +720,21 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
                     deferlink = 1;
                     break;
                 default:
-                reason = IEEE80211_REASON_AUTH_LEAVE;
-                goto deauth;
+                    /*
+                     * mt76wm: do NOT deauth on a failed GTK install.
+                     * The PTK (unicast data) is already in place and the
+                     * 4-way completed -- a wedged MCU key command here
+                     * used to abort the whole join.  Log and continue to
+                     * port-valid/link-up; only broadcast/multicast
+                     * reception stays broken until the next rekey.
+                     */
+                    XYLog("mtk-dbg-pae: GTK install failed (kid=%u), "
+                          "continuing without it\n", kid);
+                    break;
             }
         }
     }
+    skip_gtk:
     if (igtk != NULL) {    /* implies MFP && gtk != NULL */
         u_int16_t kid;
         
@@ -698,31 +774,11 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
     }
     if (info & EAPOL_KEY_INSTALL)
         ni->ni_flags |= IEEE80211_NODE_TXRXPROT;
-    
-    if (info & EAPOL_KEY_SECURE) {
-        ni->ni_flags |= IEEE80211_NODE_TXRXPROT;
-#ifndef IEEE80211_STA_ONLY
-        if (ic->ic_opmode != IEEE80211_M_IBSS ||
-            ++ni->ni_key_count == 2)
-#endif
-        {
-            if (deferlink == 0) {
-                DPRINTF(("marking port %s valid\n",
-                         ether_sprintf(ni->ni_macaddr)));
-                ni->ni_port_valid = 1;
-                ieee80211_set_link_state(ic, LINK_STATE_UP);
-            }
-            if (ni->ni_flags & IEEE80211_NODE_PMK) {
-                ieee80211_pmksa_add(ic, (enum ieee80211_akm)ni->ni_rsnakms,
-                    ni->ni_bssid, ni->ni_pmk, IEEE80211_PMK_INFINITE);
-            }
-            ni->ni_assoc_fail = 0;
-            if (ic->ic_opmode == IEEE80211_M_STA)
-                ic->ic_rsngroupcipher = ni->ni_rsngroupcipher;
-        }
-    }
+
+    /* NB: port-valid / link-up already ran right after M4 (see above). */
 deauth:
     if (reason != 0) {
+        XYLog("mtk-dbg-pae: msg3 abort reason=%u, deauth\n", reason);
         IEEE80211_SEND_MGMT(ic, ni, IEEE80211_FC0_SUBTYPE_DEAUTH,
                             reason);
         ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);

@@ -634,6 +634,11 @@ IOReturn AirportMtkwm::enable(IO80211SkywalkInterface *netif)
     _fCommandGate->enable();
     if (power_state)
         enableAdapter(bsdInterface);
+    /*
+     * enableAdapter() -> mtk_net80211_enable() waited for the firmware, so the
+     * factory MAC is known now; hand it to BSD and to the Wi-Fi stack.
+     */
+    syncHardwareAddress();
     return kIOReturnSuccess;
 }
 
@@ -968,6 +973,69 @@ IOReturn AirportMtkwm::setHardwareAddress(const void *addrP, UInt32 addrBytes)
         fHalService->enable(bsdInterface);
     }
     return kIOReturnSuccess;
+}
+
+static bool airportHardwareAddressIsPlaceholder(const UInt8 *addr)
+{
+    static const UInt8 placeholder[IEEE80211_ADDR_LEN] = { 0x02, 0, 0, 0, 0, 0 };
+    bool allZero = true;
+
+    for (int i = 0; i < IEEE80211_ADDR_LEN; i++) {
+        if (addr[i] != 0) {
+            allZero = false;
+            break;
+        }
+    }
+
+    return allZero || memcmp(addr, placeholder, IEEE80211_ADDR_LEN) == 0;
+}
+
+/*
+ * mt76wm: net80211 attaches the interface at probe time, but the factory MAC is
+ * only known once the asynchronous firmware bring-up has run
+ * mt7921_mcu_get_nic_capability(); until then mtk_net80211_attach() installs
+ * the 02:00:00:00:00:00 placeholder and the data link layer - together with the
+ * kIOMACAddress property that the Wi-Fi stack and System Information read -
+ * comes up with it.  By the time the adapter has been enabled the real address
+ * is in place (mtk_net80211_sync_mac() in the glue), so publish it to BSD too,
+ * keeping DHCP, ARP and the firmware's own-address filter consistent.  Any
+ * address the upper layer already installed (macOS per-network private Wi-Fi
+ * address) is left untouched.
+ */
+void AirportMtkwm::syncHardwareAddress()
+{
+    if (!bsdInterface || !bsdInterface->getIfnet()) {
+        return;
+    }
+
+    IOEthernetAddress hw;
+    if (getHardwareAddress(&hw) != kIOReturnSuccess) {
+        return;
+    }
+
+    UInt8 current[IEEE80211_ADDR_LEN] = { 0 };
+    if (ifnet_lladdr_copy_bytes(bsdInterface->getIfnet(), current,
+                                IEEE80211_ADDR_LEN) != 0) {
+        return;
+    }
+
+    if (memcmp(current, &hw, IEEE80211_ADDR_LEN) == 0) {
+        return;
+    }
+    if (!airportHardwareAddressIsPlaceholder(current)) {
+        XYLog("%s: keeping upper layer address %s\n", __FUNCTION__,
+              ether_sprintf(current));
+        return;
+    }
+
+    if (ifnet_set_lladdr(bsdInterface->getIfnet(), &hw,
+                         IEEE80211_ADDR_LEN) != 0) {
+        XYLog("%s: ifnet_set_lladdr failed\n", __FUNCTION__);
+        return;
+    }
+    bsdInterface->setProperty(kIOMACAddress, (void *)&hw, IEEE80211_ADDR_LEN);
+    XYLog("%s: published hardware address %s\n", __FUNCTION__,
+          ether_sprintf((const UInt8 *)&hw));
 }
 
 UInt32 AirportMtkwm::getFeatures() const

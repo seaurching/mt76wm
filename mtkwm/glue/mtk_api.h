@@ -47,9 +47,17 @@ struct mtk_hw_scan_params {
     uint8_t  ssid[32];
     uint8_t  channels[32];     /* per-channel bitmap when restricted */
 };
+void mtk_deep_sleep_off(void *mdev);
+unsigned int mtk_rfcr_read(void *mdev);
+void mtk_rfcr_open(void *mdev);
+int  mtk_offchannel(void *mdev);
+int  mtk_running(void);
+int  mtk_hw_running(void *mdev);
+int  mtk_datapath_recover(void);
 int  mtk_hw_scan_active(void *mdev);
 int  mtk_hw_scan_start(void *mdev, const struct mtk_hw_scan_params *p);
 int  mtk_hw_scan_cancel(void *mdev);
+void mtk_hw_scan_cancel_sync(void *mdev);
 void mtk_scan_abort(void);           /* net80211 side: cancel by g_n.mdev */
 void mtk_scan_done_notify(void);   /* glue -> net80211 completion */
 
@@ -325,6 +333,12 @@ int  mtk_bss_setup(void *mdev, const unsigned char *bssid, unsigned int aid,
                    unsigned int bintval, unsigned int dtim,
                    unsigned int qos, unsigned int basic_rates);
 void mtk_bss_teardown(void *mdev);
+/* Program the firmware BSS_INFO BSSID (BSS_INFO_UPDATE basic TLV only,
+ * never DEV_INFO).  The firmware's BSS-mode RX filter matches beacons
+ * against this BSSID; without it every beacon is dropped once we leave
+ * scan mode and the WCL join can never complete. */
+int  mtk_bss_prog_bssid(void *mdev, const unsigned char *bssid,
+                        unsigned int bintval, unsigned int dtim);
 
 /* Key install/removal (STA_REC_KEY_V2).  @ni selects the per-node wcid
  * (NULL: group keys go on the BSS wcid). */
@@ -349,6 +363,10 @@ int  mtk_set_edca(void *mdev, const struct mtk_edca_ac *ac4);
 
 /* Slot timing (short/long slot) -> mt792x_mac_set_timeing(). */
 int  mtk_set_slot(void *mdev, int short_slot);
+
+/* Program the LMAC timing registers (ACK wait / SIFS / slot).  Called at
+ * RUN entry and after every channel switch (reference parity). */
+void mtk_mac_set_timing(void *mdev);
 
 /* ================================================================== */
 /* net80211 -> mt76 services (glue/mtk_port_funcs.c)                   */
@@ -376,6 +394,9 @@ void mtk_hw_stop(void *mdev);
 
 /* Station MAC address recorded during probe (mt76_phy.macaddr). */
 int mtk_get_mac(void *mdev, unsigned char *out /* ETH_ALEN bytes */);
+
+/* Override the station MAC (keep net80211 and the firmware vif in sync). */
+void mtk_set_mac(void *mdev, const unsigned char *mac);
 
 #ifdef __cplusplus
 }

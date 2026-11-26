@@ -1133,6 +1133,15 @@ int mt76_connac_mcu_sta_cmd(struct mt76_phy *phy,
 					info->vif, info->rcpi,
 					info->state);
 
+	/*
+	 * mt76wm: updates (state == ASSOC) carry NO wtbl TLV at all --
+	 * the WTBL_RESET_AND_SET operation code alone is what this
+	 * firmware chokes on (3 s MCU timeout).  Reference parity:
+	 * MtkMwx.cpp set_associated_peer = basic+state+phy, no wtbl.
+	 */
+	if (info->state == MT76_STA_INFO_STATE_ASSOC)
+		return mt76_mcu_skb_send_msg(dev, skb, info->cmd, true);
+
 	sta_wtbl = mt76_connac_mcu_add_tlv(skb, STA_REC_WTBL,
 					   sizeof(struct tlv));
 
@@ -1143,17 +1152,31 @@ int mt76_connac_mcu_sta_cmd(struct mt76_phy *phy,
 		return PTR_ERR(wtbl_hdr);
 
 	if (info->enable) {
-		mt76_connac_mcu_wtbl_generic_tlv(dev, skb, info->vif,
-						 info->sta, sta_wtbl,
-						 wtbl_hdr);
-		mt76_connac_mcu_wtbl_hdr_trans_tlv(skb, info->vif, info->wcid,
-						   sta_wtbl, wtbl_hdr);
-		if (info->sta)
-			mt76_connac_mcu_wtbl_ht_tlv(dev, skb, info->sta,
-						    sta_wtbl, wtbl_hdr,
-						    true, true);
+		/*
+		 * mt76wm: only the record-CREATE path (state != ASSOC) gets
+		 * the WTBL RESET_AND_SET.  Re-sending it for an update is
+		 * what this firmware answers with a 3 s MCU timeout
+		 * (Message 00020003) -- the reference (MtkMwx.cpp
+		 * set_associated_peer) sends basic+state+phy for updates and
+		 * no wtbl TLV at all.  A stalled update also blocked the RUN
+		 * transition for 3 s, which made airportd issue LEAVE.
+		 */
+		if (info->state != MT76_STA_INFO_STATE_ASSOC) {
+			mt76_connac_mcu_wtbl_generic_tlv(dev, skb, info->vif,
+							 info->sta, sta_wtbl,
+							 wtbl_hdr);
+			mt76_connac_mcu_wtbl_hdr_trans_tlv(skb, info->vif, info->wcid,
+							   sta_wtbl, wtbl_hdr);
+			if (info->sta)
+				mt76_connac_mcu_wtbl_ht_tlv(dev, skb, info->sta,
+							    sta_wtbl, wtbl_hdr,
+							    true, true);
+		}
 	}
 
+	/*
+	 * mt76wm: wait for every response... (see below)
+	 */
 	return mt76_mcu_skb_send_msg(dev, skb, info->cmd, true);
 }
 EXPORT_SYMBOL_GPL(mt76_connac_mcu_sta_cmd);
@@ -1418,6 +1441,11 @@ u8 mt76_connac_get_phy_mode(struct mt76_phy *phy, struct ieee80211_vif *vif,
 		struct ieee80211_supported_band *sband;
 
 		sband = phy->hw->wiphy->bands[band];
+		/* mt76wm: the probe fallback may not have the band
+		 * registered; a NULL sband dereferenced below page-faults
+		 * (the RUN-entry crash after assoc). */
+		if (!sband)
+			return PHY_MODE_B | PHY_MODE_G;
 		ht_cap = &sband->ht_cap;
 		vht_cap = &sband->vht_cap;
 		he_cap = (const struct ieee80211_sta_he_cap *)ieee80211_get_he_iftype_cap(sband, vif->type);

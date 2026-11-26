@@ -37,17 +37,21 @@ static IOReturn _if_input(OSObject *target, void *arg0, void *arg1, void *arg2, 
     bool isEmpty = true;
     struct _ifnet *ifq = (struct _ifnet *)arg0;
     struct mbuf_list *ml = (struct mbuf_list *)arg1;
-    
-    MBUF_LIST_FOREACH(ml, m) {
+
+    /*
+     * mt76wm: dequeue each mbuf BEFORE handing it over.  inputPacket()
+     * may chain the mbuf into the interface queue via m_nextpkt -- the
+     * same link MBUF_LIST_FOREACH walks -- so iterating in place let the
+     * walk wander into the stack's queue and deliver those mbufs a
+     * second time (socket qlen corruption -> "assert qlen(q) == 0" at
+     * socket teardown).
+     */
+    while ((m = ml_dequeue(ml)) != NULL) {
         if (ifq->iface == NULL) {
-            panic("%s ifq->iface == NULL!!!\n", __FUNCTION__);
-            break;
-        }
-        if (m == NULL) {
-            XYLog("%s m == NULL!!!\n", __FUNCTION__);
+            XYLog("%s ifq->iface == NULL, dropping %p\n", __FUNCTION__, (void *)m);
+            mbuf_freem(m);
             continue;
         }
-        //        XYLog("%s %d 啊啊啊啊 ifq->iface->inputPacket(m) hdr_len=%d len=%d\n", __FUNCTION__, __LINE__, mbuf_pkthdr_len(m), mbuf_len(m));
         isEmpty = false;
         ifq->iface->inputPacket(m, 0, IONetworkInterface::kInputOptionQueuePacket);
         if (ifq->netStat != NULL) {

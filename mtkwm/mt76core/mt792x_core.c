@@ -1008,6 +1008,22 @@ int mt792x_mcu_fw_pmctrl(struct mt792x_dev *dev)
 	struct mt76_connac_pm *pm = &dev->pm;
 	int err = 0;
 
+	/*
+	 * mt76wm: never hand the firmware to PM on this platform.  The
+	 * own-handshake fails under macOS power management, the failure
+	 * path requests a chip reset (suppressed during bring-up), and the
+	 * datapath is left half-torn-down -- every later scan answers
+	 * NotReady ("扫描不到网络") until a manual interface re-enable.
+	 * The working mwx reference keeps the firmware awake the same way
+	 * (deep-sleep off at init).  Return an error WITHOUT the reset so
+	 * the ps_work retry loop keeps ticking harmlessly and mac_work
+	 * survives.
+	 */
+	(void)dev;
+	(void)mphy;
+	(void)pm;
+	return -EOPNOTSUPP;
+
 	mutex_lock(&pm->mutex);
 
 	if (mt76_connac_skip_fw_pmctrl(mphy, pm))

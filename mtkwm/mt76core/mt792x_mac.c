@@ -302,6 +302,14 @@ void mt792x_reset(struct mt76_dev *mdev)
 	 * can be validated on hardware.
 	 */
 	XYLog("mtk-dbg: mt792x_reset suppressed (bring-up)\n");
+	/*
+	 * Recover what we can without the full reset flow: a wedged firmware
+	 * never delivers the scan-done event, and a latched MT76_HW_SCANNING
+	 * then blocks every later scan ("扫描不到网络").  Clear the scan
+	 * engine flags so the next scan request can start afresh.
+	 */
+	clear_bit(MT76_HW_SCANNING, &mdev->phy.state);
+	clear_bit(MT76_HW_SCHED_SCANNING, &mdev->phy.state);
 }
 EXPORT_SYMBOL_GPL(mt792x_reset);
 
