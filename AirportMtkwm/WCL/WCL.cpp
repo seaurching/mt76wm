@@ -749,6 +749,7 @@ IOReturn AirportMtkwmSkywalkInterface::startWCLJoin(AirportWCL::JoinRequest &joi
     memcpy(ic->ic_des_essid, join.ssid, sizeof(ic->ic_des_essid));
     memcpy(ic->ic_des_bssid, join.bssid, 6);
     memcpy(joinBSSID, join.bssid, 6);
+    unsigned int join_ch = join.channelSpec & 0xff;   /* 0x1001 -> ch 1 */
     ic->ic_flags |= IEEE80211_F_DESBSSID;
     ic->ic_wcl_join_requested = true;
     ic->ic_wcl_scan_requested = false;
@@ -762,6 +763,35 @@ IOReturn AirportMtkwmSkywalkInterface::startWCLJoin(AirportWCL::JoinRequest &joi
     bzero(wclBeaconInfo, sizeof(wclBeaconInfo));
     disassocIsVoluntary = false;
     joinTimer->setTimeoutMS(30000);
+    /*
+     * mt76wm: if the target BSS is already in the scan cache, join it
+     * directly (choose_bss -> node_join_bss -> AUTH).  Falling through to
+     * a full 64-channel sweep exceeds airportd's ~10 s join budget on a
+     * busy band and the join aborts before auth ever starts.
+     */
+    {
+        struct ieee80211_node *curbs = ic->ic_bss;
+        struct ieee80211_node *selbs = ieee80211_node_choose_bss(ic, 0, &curbs);
+
+        if (selbs != NULL) {
+            XYLog("mtk-dbg-wcl: target BSS in cache, direct join_bss\n");
+            ieee80211_node_join_bss(ic, selbs);
+            return kIOReturnSuccess;
+        }
+    }
+    /*
+     * mt76wm: not in cache (fresh boot / MAC change).  Restrict the
+     * sweep to the channel we already know from the join request -- a
+     * full 64-channel scan exceeds airportd's ~10 s budget and the join
+     * aborts before auth starts.
+     */
+    if (join_ch >= 1 && join_ch <= 14) {
+        memset(ic->ic_wcl_scan_channels, 0, sizeof(ic->ic_wcl_scan_channels));
+        ic->ic_wcl_scan_channels[join_ch / 8] |= (uint8_t)(1u << (join_ch % 8));
+        ic->ic_wcl_scan_requested = true;
+        ic->ic_wcl_scan_restricted = true;
+        XYLog("mtk-dbg-wcl: restricted scan ch=%u\n", join_ch);
+    }
     if (ic->ic_state == IEEE80211_S_SCAN && ic->ic_wcl_scan_idle) {
         // The stack waits for us between scans (ieee80211_end_scan).
         ic->ic_wcl_scan_idle = false;
@@ -810,6 +840,11 @@ void AirportMtkwmSkywalkInterface::finishWCLJoin(uint16_t status, uint16_t reaso
     joinDeferred = false;
     explicit_bzero(&deferredJoin, sizeof(deferredJoin));
     joinTimer->cancelTimeout();
+    /* mt76wm: don't leak join's restricted-scan channel filter */
+    if (fHalService->get80211Controller()) {
+        fHalService->get80211Controller()->ic_wcl_scan_requested = false;
+        fHalService->get80211Controller()->ic_wcl_scan_restricted = false;
+    }
     postWCLDeferred(AirportWCL::ConnectComplete, &event, sizeof(event));
     if (status) {
         portAuthorized = false;
@@ -842,7 +877,14 @@ IOReturn AirportMtkwmSkywalkInterface::leaveWCLNetwork()
     joinDeferred = false;
     explicit_bzero(&deferredJoin, sizeof(deferredJoin));
     joinTimer->cancelTimeout();
+    /* mt76wm: don't leak join's restricted-scan channel filter */
+    if (fHalService->get80211Controller()) {
+        fHalService->get80211Controller()->ic_wcl_scan_requested = false;
+        fHalService->get80211Controller()->ic_wcl_scan_restricted = false;
+    }
     ic->ic_wcl_join_requested = false;
+    ic->ic_wcl_scan_requested = false;
+    ic->ic_wcl_scan_restricted = false;   /* mt76wm: don't leak join's channel filter */
     wclAssociatedBeacons = 0;
     wclBssValid = false;
     disassocIsVoluntary = true;
@@ -1033,8 +1075,16 @@ void AirportMtkwmSkywalkInterface::handleWCLEvent(int code, void *data)
                 wclLinkIndicated = true;
                 postWCLDeferred(AirportWCL::LinkStatus, &link, sizeof(link));
                 postWCLDeferred(AirportWCL::FirstBeacon, &event, sizeof(event));
-                if (portAuthorized)
-                    finishWCLJoin(0, 0, kIOReturnSuccess);
+                /*
+                 * mt76wm: complete unconditionally here.  The RUN
+                 * transition's LINK_STATE_DOWN (newstate entry) can clear
+                 * portAuthorized AFTER the 4-way brought the link up --
+                 * gating on it then let a fully-completed join die at the
+                 * abort.  M4 is on the air and the first beacon latched:
+                 * the join is done.  Re-assert link up for the stack.
+                 */
+                ieee80211_set_link_state(ic, LINK_STATE_UP);
+                finishWCLJoin(0, 0, kIOReturnSuccess);
             }
             break;
         }

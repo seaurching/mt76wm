@@ -548,6 +548,19 @@ ieee80211_recv_4way_msg3(struct ieee80211com *ic,
               gtk != NULL, igtk != NULL);
         return;
     }
+    {
+        const u_int8_t *p = (const u_int8_t *)&key[1];
+        int i, n = BE_READ_2(key->paylen);
+
+        XYLog("mtk-dbg-pae: msg3 parsed rsnie1=%d gtk=%d igtk=%d paylen=%d\n",
+              rsnie1 != NULL, gtk != NULL, igtk != NULL, n);
+        for (i = 0; i < n && i < 64; i += 16) {
+            XYLog("mtk-dbg-pae: msg3 kd[%02x]: %02x %02x %02x %02x %02x %02x %02x %02x "
+                  "%02x %02x %02x %02x %02x %02x %02x %02x\n", i,
+                  p[i], p[i+1], p[i+2], p[i+3], p[i+4], p[i+5], p[i+6], p[i+7],
+                  p[i+8], p[i+9], p[i+10], p[i+11], p[i+12], p[i+13], p[i+14], p[i+15]);
+        }
+    }
     /* key data must be encrypted if GTK is included */
     if (gtk != NULL && !(info & EAPOL_KEY_ENCRYPTED)) {
         DPRINTF(("GTK not encrypted\n"));

@@ -643,7 +643,11 @@ mtk_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
                           IEEE80211_AID(ni->ni_associd),
                           ni->ni_intval, ni->ni_dtimperiod,
                           (ni->ni_flags & IEEE80211_NODE_QOS) ? 1 : 0,
-                          basic) != 0)
+                          basic,
+                          ni->ni_chan ? ni->ni_chan->ic_freq : 2437,
+                          ((ni->ni_flags & IEEE80211_NODE_HT) ? 1u : 0u) |
+                          ((ni->ni_flags & IEEE80211_NODE_VHT) ? 2u : 0u) |
+                          ((ni->ni_flags & IEEE80211_NODE_HE) ? 4u : 0u)) != 0)
             XYLog("%s: BSS setup failed\n", __FUNCTION__);
     } else if (ic->ic_state == IEEE80211_S_RUN &&
                nstate != IEEE80211_S_RUN) {

@@ -1396,13 +1396,13 @@ void mtk_rfcr_open(void *mdev)
      * RFCR=0, the own-address programming is the missing piece.
      */
     /*
-     * Reference value (MtkMwx.cpp init: sc_rxfilter = DROP_OTHER_UC,
-     * mwx_write(RFCR, sc_rxfilter)).  Writing 0 (all drop-bits clear)
-     * kept the firmware's BSS-mode beacon filter misbehaving -- beacons
-     * only flowed in scan mode.  With the OMAC/own-address registered,
-     * DROP_OTHER_UC no longer eats our unicast (auth responses).
+     * mt76wm: wide open.  macOS applies a per-network private MAC
+     * (ic_myaddr != the OMAC registered at init), so any own-address
+     * based drop bit (DROP_OTHER_UC) eats every unicast reply the AP
+     * sends to the private address -- DHCP never completes.  Beacons are
+     * not affected either way (their key is the GTK, not RFCR).
      */
-    mt76_wr(dev, MT_WF_RFCR(0), MT_WF_RFCR_DROP_OTHER_UC);
+    mt76_wr(dev, MT_WF_RFCR(0), 0);
 }
 
 unsigned int mtk_rfcr_read(void *mdev)
@@ -2258,7 +2258,8 @@ mtk_bss_prog_bssid(void *mdev, const unsigned char *bssid,
 extern "C" int
 mtk_bss_setup(void *mdev, const unsigned char *bssid, unsigned int aid,
               unsigned int bintval, unsigned int dtim,
-              unsigned int qos, unsigned int basic_rates)
+              unsigned int qos, unsigned int basic_rates,
+              unsigned int freq, unsigned int phyflags)
 {
     const struct mtk_dev_ops *ops = mtk_ops_for_mdev(mdev);
     struct mt792x_dev *dev = (struct mt792x_dev *)mdev;
@@ -2299,6 +2300,79 @@ mtk_bss_setup(void *mdev, const unsigned char *bssid, unsigned int aid,
     ret = mt7921_mcu_set_bss_pm(dev, g_m6.vif, true);
     if (ret)
         goto out;
+    /*
+     * Reference port (MtkMwx.cpp mt7921_mcu_set_associated_bss): the
+     * BSS_INFO BASIC + RLM burst.  This is what flips the firmware into
+     * connected-BSS mode -- without it beacons only flow while scanning
+     * and the WCL join can never complete (firstBeacon gate).
+     */
+    {
+        struct mt76_vif_link *mvifl = &mvif->bss_conf.mt76;
+        int is_2g = freq < 3000;
+        u8 ctrl = is_2g ? (freq == 2484 ? 14 : (freq - 2407) / 5)
+                        : (freq - 5000) / 5;
+        struct {
+            u8 bss_idx;
+            u8 pad[3];
+            struct mt76_connac_bss_basic_tlv basic;
+        } __packed breq;
+        struct {
+            u8 bss_idx;
+            u8 pad[3];
+            struct {
+                u16 tag, len;
+                u8 control_channel, center_chan, center_chan2, bw;
+                u8 tx_streams, rx_streams, short_st, ht_op_info;
+                u8 sco, band, pad2[2];
+            } __packed rlm;
+        } __packed rreq;
+        u16 wcid = (u16)mvif->sta.deflink.wcid.idx;
+
+        memset(&breq, 0, sizeof(breq));
+        breq.bss_idx = mvifl->idx;
+        breq.basic.tag = cpu_to_le16(UNI_BSS_INFO_BASIC);
+        breq.basic.len = cpu_to_le16(sizeof(breq.basic));
+        breq.basic.active = 1;
+        breq.basic.omac_idx = mvifl->omac_idx;
+        breq.basic.hw_bss_idx = mvifl->omac_idx > EXT_BSSID_START ?
+            HW_BSSID_0 : mvifl->omac_idx;
+        breq.basic.band_idx = mvifl->band_idx;
+        breq.basic.conn_type = cpu_to_le32(STA_TYPE_STA | NETWORK_INFRA);
+        breq.basic.conn_state = 0;   /* connected (we only run at assoc) */
+        breq.basic.wmm_idx = mvifl->wmm_idx;
+        memcpy(breq.basic.bssid, bssid, ETH_ALEN);
+        breq.basic.bmc_tx_wlan_idx = cpu_to_le16(wcid);
+        breq.basic.sta_idx = cpu_to_le16(wcid);
+        breq.basic.bcn_interval = cpu_to_le16(bintval ? bintval : 100);
+        breq.basic.dtim_period = dtim ? dtim : 1;
+        breq.basic.phymode = is_2g ? ((1u << 1) | (1u << 2)) : (1u << 0);
+        if (phyflags & 1u)
+            breq.basic.phymode |= is_2g ? (1u << 3) : (1u << 4);
+        if (phyflags & 2u)
+            breq.basic.phymode |= (1u << 5);
+        if (phyflags & 4u)
+            breq.basic.phymode |= is_2g ? (1u << 6) : (1u << 7);
+        breq.basic.nonht_basic_phy = cpu_to_le16(is_2g ?
+            PHY_TYPE_BIT_HR_DSSS | PHY_TYPE_BIT_ERP : PHY_TYPE_BIT_OFDM);
+        ret = mt76_mcu_send_msg(&dev->mt76, MCU_UNI_CMD(BSS_INFO_UPDATE),
+                                &breq, sizeof(breq), false);
+        XYLog("mtk-dbg: BSS_INFO basic rv=%d ctrl=%u\n", ret, ctrl);
+
+        memset(&rreq, 0, sizeof(rreq));
+        rreq.bss_idx = mvifl->idx;
+        rreq.rlm.tag = cpu_to_le16(UNI_BSS_INFO_RLM);
+        rreq.rlm.len = cpu_to_le16(sizeof(rreq.rlm));
+        rreq.rlm.control_channel = ctrl;
+        rreq.rlm.center_chan = ctrl;
+        rreq.rlm.bw = 0;
+        rreq.rlm.tx_streams = 2;
+        rreq.rlm.rx_streams = 2;
+        rreq.rlm.short_st = 1;
+        rreq.rlm.band = is_2g ? 0 : 1;
+        ret = mt76_mcu_send_msg(&dev->mt76, MCU_UNI_CMD(BSS_INFO_UPDATE),
+                                &rreq, sizeof(rreq), false);
+        XYLog("mtk-dbg: BSS_INFO rlm rv=%d\n", ret);
+    }
     /*
      * BSS station record: reference parity (MtkMwx.cpp RUN case =
      * set_associated_bss + set_associated_peer ONLY).  There is no

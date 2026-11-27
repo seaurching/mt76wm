@@ -2886,7 +2886,13 @@ int mt76_connac_mcu_add_key(struct mt76_dev *dev, struct ieee80211_vif *vif,
 		return ret;
 	}
 
-	return mt76_mcu_skb_send_msg(dev, skb, mcu_cmd, true);
+	/*
+	 * mt76wm: fire-and-forget.  The firmware answers this late or never
+	 * (3 s stall), but the command executes -- and broadcast/beacon Rx
+	 * only starts once the GTK has landed (bmc wcid path).  Waiting here
+	 * held the join well past airportd's 1.6 s window.
+	 */
+	return mt76_mcu_skb_send_msg(dev, skb, mcu_cmd, false);
 }
 EXPORT_SYMBOL_GPL(mt76_connac_mcu_add_key);
 

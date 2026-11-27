@@ -331,7 +331,8 @@ void mtk_sta_remove(void *mdev, void *ni);
  */
 int  mtk_bss_setup(void *mdev, const unsigned char *bssid, unsigned int aid,
                    unsigned int bintval, unsigned int dtim,
-                   unsigned int qos, unsigned int basic_rates);
+                   unsigned int qos, unsigned int basic_rates,
+                   unsigned int freq, unsigned int phyflags);
 void mtk_bss_teardown(void *mdev);
 /* Program the firmware BSS_INFO BSSID (BSS_INFO_UPDATE basic TLV only,
  * never DEV_INFO).  The firmware's BSS-mode RX filter matches beacons
